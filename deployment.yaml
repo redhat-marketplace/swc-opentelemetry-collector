@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoinstrumentation-example 
+  labels:
+    app: autoinstrumentation-example 
+spec:
+  replicas: 1 
+  selector:
+    matchLabels:
+      app: autoinstrumentation-example 
+  template:
+    metadata:
+      labels:
+        app: autoinstrumentation-example 
+    spec:
+      containers:
+      - name: autoinstrumentation-go
+        image: # autoinstrumentation-go:latest https://github.com/open-telemetry/opentelemetry-go-instrumentation/blob/main/docs/getting-started.md#instrument-an-application-in-kubernetes 
+        imagePullPolicy: Always
+        env:
+        - name: OTEL_GO_AUTO_TARGET_EXE
+          value: "/app"  # The location of the target Go application binary inside the container
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "autoinstrumentation-example"
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: "http/protobuf" 
+        ports:
+        - containerPort: 8080
+      - name: golang-app
+        image: # golang-app image 
+        imagePullPolicy: Always 
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autoinstrumentation-example 
+spec:
+  selector:
+    app: autoinstrumentation-example 
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP

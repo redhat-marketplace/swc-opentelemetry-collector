@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: otel
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      hostmetrics:
+        collection_interval: 60s  
+        scrapers:
+          cpu:
+          memory:
+          disk:
+          network:
+      otlp:
+        protocols:
+          grpc:
+            endpoint:  
+          http:
+            endpoint: 0.0.0.0:4318
+
+    exporters:
+      otlp/betterstack:
+        endpoint: "https://in-otel.logs.betterstack.com:443"
+      prometheusremotewrite/betterstack:
+        endpoint: "https://in-otel.logs.betterstack.com/metrics"
+
+    processors:
+      batch:
+      attributes/betterstack:
+        actions:
+          - key: better_stack_source_token
+            value: #dashboard provider token 
+            action: insert
+
+    service:
+      pipelines:
+        metrics/betterstack:
+          receivers: [hostmetrics, otlp]
+          processors: [batch, attributes/betterstack]
+          exporters: [prometheusremotewrite/betterstack]
+        logs/betterstack:
+          receivers: [otlp]
+          processors: [batch, attributes/betterstack]
+          exporters: [otlp/betterstack]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector:latest
+          command:
+            - "/otelcol"
+            - "--config=/conf/otel-collector-config.yaml"
+          volumeMounts:
+            - name: otel-collector-config
+              mountPath: /conf
+          ports:
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+      volumes:
+        - name: otel-collector-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  ports:
+    - name: grpc 
+      port: 4317
+      protocol: TCP
+      targetPort: 4317
+    - name: http 
+      port: 55681
+      protocol: TCP
+      targetPort: 55681
+  selector:
+    app: otel-collector
+  type: ClusterIP
