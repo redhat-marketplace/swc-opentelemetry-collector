@@ -91,10 +91,26 @@ spec:
       port: 4317
       protocol: TCP
       targetPort: 4317
-    - name: http 
-      port: 55681
+    - name: otel-http 
+      port: 4318 
       protocol: TCP
-      targetPort: 55681
+      targetPort: 4318 
   selector:
     app: otel-collector
   type: ClusterIP
+---
+    apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: otel-collector-route
+      namespace: otel
+    spec:
+      to:
+        kind: Service
+        name: otel-collector
+      port:
+        targetPort: otel-http # Referencing the port by name instead of port number
+      tls:
+        termination: edge
+      wildcardPolicy: None
+    
