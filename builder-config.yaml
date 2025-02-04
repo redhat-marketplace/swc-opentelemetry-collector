@@ -1,0 +1,27 @@
+dist:
+  name: otelcol-custom
+  description: Custom OpenTelemetry Collector build
+  output_path: /tmp/dist
+exporters:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/otlpexporter v0.100.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter v0.100.0
+  - gomod: github.com/redhat-marketplace/swc-opentelemetry-collector v0.1.0
+
+receivers:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/otlpreceiver v0.100.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.100.0
+
+processors:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/batchprocessor v0.100.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor v0.100.0
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [batch, attributes]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes]
+      exporters: [otlp]
