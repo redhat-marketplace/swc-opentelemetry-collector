@@ -17,11 +17,6 @@ package ibmsoftwarecentralexporter
 import (
 	"archive/tar"
 	"bytes"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"emperror.dev/errors"
@@ -98,69 +93,4 @@ func (pool *TarGzipPool) TGZ(uuid string, manifest []byte, data []byte) ([]byte,
 
 	return buf.Bytes(), err
 
-}
-
-func (pool *TarGzipPool) TarGzip(src string, dest string) error {
-
-	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("unable to tar files - %v", err.Error())
-	}
-
-	destFile, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	gzw := pool.GetWriter(destFile)
-
-	tw := tar.NewWriter(gzw)
-	defer tw.Close()
-
-	err = filepath.Walk(src, func(file string, fi os.FileInfo, errIn error) error {
-
-		if errIn != nil {
-			return errors.Wrap(errIn, "failed to tar files")
-		}
-
-		if !fi.Mode().IsRegular() {
-			return nil
-		}
-
-		header, err := tar.FileInfoHeader(fi, fi.Name())
-		if err != nil {
-			return errors.Wrap(err, "failed to create new dir")
-		}
-
-		header.Name = strings.TrimPrefix(strings.ReplaceAll(file, src, ""), string(filepath.Separator))
-
-		if err = tw.WriteHeader(header); err != nil {
-			return errors.Wrap(err, "failed to write header")
-		}
-
-		f, err := os.Open(file)
-		if err != nil {
-			return errors.Wrap(err, "failed to open file for taring")
-		}
-
-		if _, err := io.Copy(tw, f); err != nil {
-			return errors.Wrap(err, "failed to copy data")
-		}
-
-		f.Close()
-
-		return nil
-	})
-
-	if twerr := tw.Close(); twerr != nil {
-		err = errors.Append(err, twerr)
-	}
-
-	pool.PutWriter(gzw)
-
-	if derr := destFile.Close(); derr != nil {
-		err = errors.Append(err, derr)
-	}
-
-	return err
 }
