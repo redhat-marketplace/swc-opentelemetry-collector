@@ -1,0 +1,13 @@
+type: ibmsoftwarecentral
+
+status:
+  class: exporter
+  stability: 
+    alpha: [logs]
+  distributions: []
+  codeowners:
+    active: [dacleyra]
+
+# TODO: Update the exporter to pass the tests
+tests:
+  skip_lifecycle: true

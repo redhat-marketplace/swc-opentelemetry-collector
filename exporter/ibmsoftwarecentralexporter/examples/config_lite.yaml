@@ -1,0 +1,21 @@
+extensions:
+  bearertokenauthextension:
+
+exporters:
+  ibmsoftwarecentralexporter:
+
+receivers:
+  webhookeventreceiver:
+
+service:
+  telemetry:
+      logs:
+        level: "debug"
+  extensions:
+    - bearertokenauthextension
+  pipelines:
+    logs:
+      receivers:
+        - webhookeventreceiver
+      exporters:
+        - ibmsoftwarecentralexporter
