@@ -1,11 +1,11 @@
 extensions:
-  bearertokenauthextension:
+  bearertokenauth:
   file_storage/otc:
     directory: /var/lib/storage/otc
     timeout: 10s
 
 exporters:
-  ibmsoftwarecentralexporter:
+  ibmsoftwarecentral:
     endpoint: https://swc.saas.ibm.com/metering/api/v2/metrics
     tls:
       ca_file: certs/servercert.pem
@@ -47,17 +47,17 @@ exporters:
     # default = 5s
     timeout: 1s
 receivers:
-  webhookeventreceiver:
+  webhookevent:
 
 service:
   telemetry:
       logs:
         level: "debug"
   extensions:
-    - bearertokenauthextension
+    - bearertokenauth
   pipelines:
     logs:
       receivers:
-        - webhookeventreceiver
+        - webhookevent
       exporters:
-        - ibmsoftwarecentralexporter
+        - ibmsoftwarecentral
