@@ -1,13 +1,13 @@
 # Build stage
-FROM otel/opentelemetry-collector-builder:latest AS builder
+FROM docker.io/otel/opentelemetry-collector-builder:latest AS builder
 
-COPY --from=builder /tmp/dist/otelcol-custom /otelcol-custom
+COPY builder-config.yaml /build/builder-config.yaml
 
-RUN otelcol-builder --config /builder-config.yaml --output /otelcol-custom
+RUN ocb --config=/build/builder-config.yaml
 
 # Final image
-FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
-COPY --from=builder /otelcol-custom /otelcol-custom
+COPY --from=builder /tmp/dist/otelcol-custom /otelcol-custom
 
 ENTRYPOINT ["/otelcol-custom"]
