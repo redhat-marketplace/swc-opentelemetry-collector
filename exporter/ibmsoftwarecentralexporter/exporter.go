@@ -17,16 +17,15 @@ package ibmsoftwarecentralexporter // import "github.com/redhat-marketplace/swc-
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
-	"time"
+	"net/textproto"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
@@ -38,33 +37,25 @@ type ibmsoftwarecentralexporter struct {
 	config            *Config
 	telemetrySettings component.TelemetrySettings
 	logger            *zap.Logger
-	tlsConfig         *tls.Config
 	client            *http.Client
 	tarGzipPool       *TarGzipPool
 }
 
 func initExporter(cfg *Config, createSettings exporter.Settings) (*ibmsoftwarecentralexporter, error) {
-	var loadedTLSConfig *tls.Config
-	loadedTLSConfig, err := cfg.TLSSetting.LoadTLSConfig(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
 	tarGzipPool := &TarGzipPool{}
 
-	i := &ibmsoftwarecentralexporter{
+	se := &ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: createSettings.TelemetrySettings,
 		logger:            createSettings.Logger,
-		tlsConfig:         loadedTLSConfig,
 		tarGzipPool:       tarGzipPool,
 	}
 
-	i.logger.Info("IBM Software Central Exporter configured",
+	se.logger.Info("IBM Software Central Exporter configured",
 		zap.String("endpoint", cfg.Endpoint),
 	)
 
-	return i, nil
+	return se, nil
 }
 
 func newLogsExporter(
@@ -91,9 +82,17 @@ func newLogsExporter(
 }
 
 func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
-	clientConfig := confighttp.NewDefaultClientConfig()
-	clientConfig.Timeout = 30 * time.Second
-	se.client, err = clientConfig.ToClient(ctx, host, se.telemetrySettings)
+	if se.config.ClientConfig.Auth != nil {
+		se.logger.Debug("auth",
+			zap.String("clientConfig.Auth", fmt.Sprint(se.config.ClientConfig.Auth)),
+		)
+	} else {
+		se.logger.Debug("auth",
+			zap.String("clientConfig.Auth", "isNil"),
+		)
+	}
+
+	se.client, err = se.config.ClientConfig.ToClient(ctx, host, se.telemetrySettings)
 	return err
 }
 
@@ -114,8 +113,16 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 			scopeLogs := resourceLogs.ScopeLogs().At(j)
 			for k := 0; k < scopeLogs.LogRecords().Len(); k++ {
 				logRecord := scopeLogs.LogRecords().At(k)
-				if json.Valid(logRecord.Body().Bytes().AsRaw()) {
-					eventJsons = append(eventJsons, logRecord.Body().Bytes().AsRaw())
+				se.logger.Debug("logRecord",
+					zap.String("logRecord.Body().AsString()", logRecord.Body().AsString()),
+				)
+				b := []byte(logRecord.Body().AsString())
+				if json.Valid(b) {
+					eventJsons = append(eventJsons, b)
+				} else {
+					se.logger.Debug("logRecord was not json",
+						zap.String("logRecord.Body().AsString()", logRecord.Body().AsString()),
+					)
 				}
 			}
 		}
@@ -129,11 +136,19 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 			return err
 		}
 
+		se.logger.Debug("report",
+			zap.String("data", string(reportDataBytes)),
+		)
+
 		manifest := Manifest{Type: "dataReporter", Version: "1"}
 		manifestBytes, err := json.Marshal(manifest)
 		if err != nil {
 			return err
 		}
+
+		se.logger.Debug("report",
+			zap.String("manifest", string(manifestBytes)),
+		)
 
 		id := uuid.New()
 
@@ -142,23 +157,51 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 			return err
 		}
 
-		req, err := http.NewRequest(http.MethodPost, se.config.Endpoint, bytes.NewBuffer(archive))
+		archiveReader := bytes.NewBuffer(archive)
+		reqBody := &bytes.Buffer{}
+		writer := multipart.NewWriter(reqBody)
+
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="isce-%s"; filename="isce-%s.tar.gz"`, id, id))
+		h.Set("Content-Type", "application/gzip")
+
+		part, err := writer.CreatePart(h)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.Copy(part, archiveReader)
+		if err != nil {
+			return err
+		}
+
+		err = writer.Close()
+		if err != nil {
+			return err
+		}
+
+		req, err := http.NewRequest(http.MethodPost, se.config.Endpoint, reqBody)
 		if err != nil {
 			return consumererror.NewLogs(err, logs)
 		}
+		for k, v := range se.config.ClientConfig.Headers {
+			req.Header.Set(k, string(v))
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
 
 		res, err := se.client.Do(req)
 		if err != nil {
 			return err
 		}
-		body, err := io.ReadAll(res.Body)
+
+		resBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			return err
 		}
 		if err = res.Body.Close(); err != nil {
 			return err
 		}
-		rerr := fmt.Errorf("remote write returned HTTP status %v; err = %w: %s", res.Status, err, string(body))
+		rerr := fmt.Errorf("remote write returned HTTP status %v; err = %w: %s", res.Status, err, string(resBody))
 		switch {
 		case res.StatusCode >= 200 && res.StatusCode < 300: // Success
 			break
@@ -167,7 +210,7 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 		case res.StatusCode == http.StatusTooManyRequests: // Retryable error
 			return rerr
 		default: // Terminal error
-			return consumererror.NewPermanent(fmt.Errorf("line protocol write returned %q %q", res.Status, string(body)))
+			return consumererror.NewPermanent(fmt.Errorf("line protocol write returned %q %q", res.Status, string(resBody)))
 		}
 	}
 	return nil

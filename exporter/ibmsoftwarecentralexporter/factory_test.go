@@ -20,6 +20,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
@@ -36,7 +37,9 @@ func TestCreateDefaultConfig(t *testing.T) {
 	cfg := createDefaultConfig()
 
 	assert.Equal(t, &Config{
-		Endpoint: "https://swc.saas.ibm.com/metering/api/v2/metrics",
+		ClientConfig: confighttp.ClientConfig{
+			Endpoint: "https://swc.saas.ibm.com/metering/api/v2/metrics",
+		},
 		QueueSettings: exporterhelper.QueueConfig{
 			Enabled:      false,
 			NumConsumers: 10,
