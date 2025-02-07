@@ -17,8 +17,10 @@ package ibmsoftwarecentralexporter // import "github.com/redhat-marketplace/swc-
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
@@ -36,11 +38,14 @@ func NewFactory() exporter.Factory {
 }
 
 func createDefaultConfig() component.Config {
+	cc := confighttp.NewDefaultClientConfig()
+	cc.Timeout = 30 * time.Second
+
 	qs := exporterhelper.NewDefaultQueueConfig()
 	qs.Enabled = false
 
 	return &Config{
-		Endpoint:        DefaultEndpoint,
+		ClientConfig:    cc,
 		BackOffConfig:   configretry.NewDefaultBackOffConfig(),
 		QueueSettings:   qs,
 		TimeoutSettings: exporterhelper.NewDefaultTimeoutConfig(),

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/config/confighttp"
 )
 
 func TestValidate(t *testing.T) {
@@ -29,7 +30,9 @@ func TestValidate(t *testing.T) {
 		{
 			name: "invalid Endpoint",
 			cfg: &Config{
-				Endpoint: "http://bad\\escape",
+				ClientConfig: confighttp.ClientConfig{
+					Endpoint: "http://bad\\escape",
+				},
 			},
 			err: "invalid endpoint: endpoint is required but it is not configured",
 		},

@@ -1,16 +1,21 @@
 extensions:
   bearertokenauth:
+    filename: stage.token
   file_storage/otc:
-    directory: /var/lib/storage/otc
+    directory: otc
     timeout: 10s
+
+receivers:
+  webhookevent:
+    endpoint: localhost:8088
+    path: "/"
+    health_path: "/health"
 
 exporters:
   ibmsoftwarecentral:
-    endpoint: https://swc.saas.ibm.com/metering/api/v2/metrics
-    tls:
-      ca_file: certs/servercert.pem
-      cert_file: certs/cert.pem
-      key_file: certs/key.pem
+    endpoint: https://sandbox.swc.saas.ibm.com/metering/api/v2/metrics
+    auth:
+      authenticator: bearertokenauth
 
     # for below described queueing and retry related configuration please refer to:
     # https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md#configuration
@@ -46,8 +51,6 @@ exporters:
     # Time to wait per individual attempt to send data to a backend
     # default = 5s
     timeout: 1s
-receivers:
-  webhookevent:
 
 service:
   telemetry:
@@ -55,6 +58,7 @@ service:
         level: "debug"
   extensions:
     - bearertokenauth
+    - file_storage/otc
   pipelines:
     logs:
       receivers:

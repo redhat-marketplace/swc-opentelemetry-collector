@@ -18,8 +18,8 @@ import (
 	"errors"
 	"net/url"
 
+	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configretry"
-	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
@@ -29,15 +29,13 @@ var (
 
 // Config defines configuration for IBM Software Central exporter.
 type Config struct {
-	// Server address
-	Endpoint string `mapstructure:"endpoint"`
+	confighttp.ClientConfig `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
 
-	// TLSSetting struct exposes TLS client configuration.
-	TLSSetting configtls.ClientConfig `mapstructure:"tls"`
+	QueueSettings exporterhelper.QueueConfig `mapstructure:"sending_queue"`
 
-	QueueSettings             exporterhelper.QueueConfig `mapstructure:"sending_queue"`
 	configretry.BackOffConfig `mapstructure:"retry_on_failure"`
-	TimeoutSettings           exporterhelper.TimeoutConfig `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
+
+	TimeoutSettings exporterhelper.TimeoutConfig `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
 }
 
 // Validate the configuration for errors. This is required by component.Config.
