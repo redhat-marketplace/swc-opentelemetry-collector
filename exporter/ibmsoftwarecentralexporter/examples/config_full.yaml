@@ -52,6 +52,12 @@ exporters:
     # default = 5s
     timeout: 1s
 
+processors:
+  filter:
+    logs:
+      log_record:
+        - "IsMap(ParseJSON(body)) == false"
+
 service:
   telemetry:
       logs:
@@ -65,3 +71,6 @@ service:
         - webhookevent
       exporters:
         - ibmsoftwarecentral
+      processors:
+        - filter
+
