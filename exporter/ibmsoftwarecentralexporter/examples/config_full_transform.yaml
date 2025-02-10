@@ -57,6 +57,14 @@ processors:
     logs:
       log_record:
         - "IsMap(ParseJSON(body)) == false"
+  transform:
+    log_statements:
+    - context: log
+      statements:
+      - merge_maps(cache, ParseJSON(log.body), "upsert") where IsMatch(log.body, "^\\{") 
+      - merge_maps(cache,{"new_key":"new_value"}, "upsert") 
+      - set(log.body, cache)
+  
 
 service:
   telemetry:
