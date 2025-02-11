@@ -25,15 +25,27 @@ import (
 	"net/textproto"
 
 	"github.com/google/uuid"
+
+	"github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/v3alpha1"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.uber.org/zap"
 )
 
 type ibmsoftwarecentralexporter struct {
+	config            *Config
+	telemetrySettings component.TelemetrySettings
+	logger            *zap.Logger
+	client            *http.Client
+	tarGzipPool       *TarGzipPool
+}
+
+type swcAccountMetricsExporter struct {
 	config            *Config
 	telemetrySettings component.TelemetrySettings
 	logger            *zap.Logger
@@ -52,6 +64,23 @@ func initExporter(cfg *Config, createSettings exporter.Settings) (*ibmsoftwarece
 	}
 
 	se.logger.Info("IBM Software Central Exporter configured",
+		zap.String("endpoint", cfg.Endpoint),
+	)
+
+	return se, nil
+}
+
+func initSWCAccountMetricsExporter(cfg *Config, createSettings exporter.Settings) (*swcAccountMetricsExporter, error) {
+	tarGzipPool := &TarGzipPool{}
+
+	se := &swcAccountMetricsExporter{
+		config:            cfg,
+		telemetrySettings: createSettings.TelemetrySettings,
+		logger:            createSettings.Logger,
+		tarGzipPool:       tarGzipPool,
+	}
+
+	se.logger.Info("SWC Account Metrics Exporter configured",
 		zap.String("endpoint", cfg.Endpoint),
 	)
 
@@ -79,6 +108,19 @@ func newLogsExporter(
 		exporterhelper.WithStart(s.start),
 		exporterhelper.WithShutdown(s.shutdown),
 	)
+}
+
+func newMetricsExporter(
+	ctx context.Context,
+	params exporter.Settings,
+	cfg *Config,
+) (exporter.Metrics, error) {
+	s, err := initSWCAccountMetricsExporter(cfg, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize the metrics exporter: %w", err)
+	}
+
+	return exporterhelper.NewMetrics(ctx, params, cfg, s.pushMetricsData)
 }
 
 func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
@@ -215,4 +257,67 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 	}
 	return nil
 
+}
+
+/*
+type ConsumeMetricsFunc func(ctx context.Context, md pmetric.Metrics) error
+*/
+func (se *swcAccountMetricsExporter) pushMetricsData(ctx context.Context, metrics pmetric.Metrics) error {
+
+	swcMetrics := transformMetrics(metrics)
+
+	fmt.Printf("Transformed SWC Account Metrics: %+v\n", swcMetrics)
+
+	return nil
+}
+
+func transformMetrics(metrics pmetric.Metrics) []v3alpha1.SourceMetadata {
+	var transformedMetrics []v3alpha1.SourceMetadata
+
+	rm := metrics.ResourceMetrics()
+	for i := 0; i < rm.Len(); i++ {
+		resourceMetric := rm.At(i)
+		ilms := resourceMetric.ScopeMetrics()
+
+		for j := 0; j < ilms.Len(); j++ {
+			metrics := ilms.At(j).Metrics()
+
+			for k := 0; k < metrics.Len(); k++ {
+				metric := metrics.At(k) // unused for now I don't have the full schema here
+
+				clusterID, accountID, version := extractMetricAttributes(resourceMetric)
+
+				swcMetric := v3alpha1.SourceMetadata{
+					ClusterID:     clusterID,
+					AccountID:     accountID,
+					Environment:   v3alpha1.ReportEnvironment("report environment"),
+					Version:       version,
+					ReportVersion: "v1",
+				}
+
+				fmt.Printf("Processing Metric: %s\n", metric.Name())
+
+				transformedMetrics = append(transformedMetrics, swcMetric)
+			}
+		}
+	}
+
+	return transformedMetrics
+}
+
+func extractMetricAttributes(rm pmetric.ResourceMetrics) (string, string, string) {
+	attrs := rm.Resource().Attributes()
+	clusterID := getAttribute(attrs, "clusterId")
+	accountID := getAttribute(attrs, "accountId")
+	version := getAttribute(attrs, "version")
+
+	return clusterID, accountID, version
+}
+
+func getAttribute(attrs pcommon.Map, key string) string {
+	val, ok := attrs.Get(key)
+	if ok {
+		return val.AsString()
+	}
+	return ""
 }
