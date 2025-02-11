@@ -19,8 +19,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
+var typ = component.MustNewType("ibmsoftwarecentral")
+
 func TestComponentFactoryType(t *testing.T) {
-	require.Equal(t, "ibmsoftwarecentral", NewFactory().Type().String())
+	require.Equal(t, typ, NewFactory().Type())
 }
 
 func TestComponentConfigStruct(t *testing.T) {
@@ -39,6 +41,13 @@ func TestComponentLifecycle(t *testing.T) {
 			name: "logs",
 			createFn: func(ctx context.Context, set exporter.Settings, cfg component.Config) (component.Component, error) {
 				return factory.CreateLogs(ctx, set, cfg)
+			},
+		},
+
+		{
+			name: "metrics",
+			createFn: func(ctx context.Context, set exporter.Settings, cfg component.Config) (component.Component, error) {
+				return factory.CreateMetrics(ctx, set, cfg)
 			},
 		},
 	}

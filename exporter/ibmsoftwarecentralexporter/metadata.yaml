@@ -3,7 +3,7 @@ type: ibmsoftwarecentral
 status:
   class: exporter
   stability: 
-    alpha: [logs]
+    alpha: [logs,metrics]
   distributions: []
   codeowners:
     active: [dacleyra]
