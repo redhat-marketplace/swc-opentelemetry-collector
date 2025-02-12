@@ -11,6 +11,7 @@ exporters:
 receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/webhookeventreceiver v0.119.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.119.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/simpleprometheusreceiver v0.119.0
 processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.119.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/metricstransformprocessor v0.119.0

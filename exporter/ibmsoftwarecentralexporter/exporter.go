@@ -120,7 +120,7 @@ func newMetricsExporter(
 		return nil, fmt.Errorf("failed to initialize the metrics exporter: %w", err)
 	}
 
-	return exporterhelper.NewMetrics(ctx, params, cfg, s.pushMetricsData)
+	return exporterhelper.NewMetrics(ctx, params, cfg, s.ConsumeMetrics)
 }
 
 func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
@@ -262,62 +262,142 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 /*
 type ConsumeMetricsFunc func(ctx context.Context, md pmetric.Metrics) error
 */
-func (se *swcAccountMetricsExporter) pushMetricsData(ctx context.Context, metrics pmetric.Metrics) error {
+func (se *swcAccountMetricsExporter) ConsumeMetrics(ctx context.Context, metrics pmetric.Metrics) error {
+	// Iterate over the ResourceMetrics and pass each one to transformMetrics
+	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
+		rm := metrics.ResourceMetrics().At(i)
+		swcMetrics := transformMetrics(rm)
 
-	swcMetrics := transformMetrics(metrics)
-
-	fmt.Printf("Transformed SWC Account Metrics: %+v\n", swcMetrics)
+		fmt.Printf("Transformed SWC Account Metrics: %+v\n", swcMetrics)
+	}
 
 	return nil
 }
 
-func transformMetrics(metrics pmetric.Metrics) []v3alpha1.SourceMetadata {
-	var transformedMetrics []v3alpha1.SourceMetadata
+func transformMetrics(rm pmetric.ResourceMetrics) v3alpha1.MarketplaceReportSlice {
+	metadata := transformMetadata(rm)
+	reportDataList := constructReportData(rm)
 
-	rm := metrics.ResourceMetrics()
-	for i := 0; i < rm.Len(); i++ {
-		resourceMetric := rm.At(i)
-		ilms := resourceMetric.ScopeMetrics()
+	fmt.Printf("%s", v3alpha1.MarketplaceReportSlice{
+		Metadata: metadata,
+		Metrics:  reportDataList,
+	})
 
-		for j := 0; j < ilms.Len(); j++ {
-			metrics := ilms.At(j).Metrics()
+	return v3alpha1.MarketplaceReportSlice{
+		Metadata: metadata,
+		Metrics:  reportDataList,
+	}
+}
 
-			for k := 0; k < metrics.Len(); k++ {
-				metric := metrics.At(k) // unused for now I don't have the full schema here
+func transformMetadata(rm pmetric.ResourceMetrics) *v3alpha1.SourceMetadata {
+	attrs := rm.Resource().Attributes()
 
-				clusterID, accountID, version := extractMetricAttributes(resourceMetric)
+	environmentStr := getAttribute(attrs, "evnironment", "")
+	environment := getReportEnvironment(environmentStr)
 
-				swcMetric := v3alpha1.SourceMetadata{
-					ClusterID:     clusterID,
-					AccountID:     accountID,
-					Environment:   v3alpha1.ReportEnvironment("report environment"),
-					Version:       version,
-					ReportVersion: "v1",
-				}
+	return &v3alpha1.SourceMetadata{
+		ClusterID:     getAttribute(attrs, "clusterId", ""),
+		AccountID:     getAttribute(attrs, "accountId", ""),
+		Version:       getAttribute(attrs, "version", ""),
+		ReportVersion: getAttribute(attrs, "reportVersion", ""),
+		Environment:   environment,
+	}
+}
 
-				fmt.Printf("Processing Metric: %s\n", metric.Name())
+func getReportEnvironment(environmentStr string) v3alpha1.ReportEnvironment {
+	switch environmentStr {
+	case string(v3alpha1.ReportProductionEnv):
+		return v3alpha1.ReportProductionEnv
+	case string(v3alpha1.ReportSandboxEnv):
+		return v3alpha1.ReportSandboxEnv
+	default:
+		return ""
+	}
+}
 
-				transformedMetrics = append(transformedMetrics, swcMetric)
+func constructReportData(rm pmetric.ResourceMetrics) []*v3alpha1.MarketplaceReportData {
+	var reportDataList []*v3alpha1.MarketplaceReportData
+
+	for i := 0; i < rm.ScopeMetrics().Len(); i++ {
+		scopeMetrics := rm.ScopeMetrics().At(i)
+
+		for j := 0; j < scopeMetrics.Metrics().Len(); j++ {
+			metric := scopeMetrics.Metrics().At(j)
+
+			if metric.Type() == pmetric.MetricTypeSum {
+				reportData := transformMarketplaceReportData(rm)
+				reportData.MeasuredUsage = transformMeasuredUsage(metric)
+				reportDataList = append(reportDataList, reportData)
 			}
 		}
 	}
 
-	return transformedMetrics
+	return reportDataList
 }
 
-func extractMetricAttributes(rm pmetric.ResourceMetrics) (string, string, string) {
+func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
+	var usageList []v3alpha1.MeasuredUsage
+
+	for i := 0; i < metric.Sum().DataPoints().Len(); i++ {
+		dataPoint := metric.Sum().DataPoints().At(i)
+
+		usage := v3alpha1.MeasuredUsage{
+			MetricID: metric.Name(),
+			Value:    dataPoint.DoubleValue(),
+		}
+
+		usageList = append(usageList, usage)
+	}
+
+	return usageList
+}
+
+func transformMarketplaceReportData(rm pmetric.ResourceMetrics) *v3alpha1.MarketplaceReportData {
 	attrs := rm.Resource().Attributes()
-	clusterID := getAttribute(attrs, "clusterId")
-	accountID := getAttribute(attrs, "accountId")
-	version := getAttribute(attrs, "version")
 
-	return clusterID, accountID, version
+	return &v3alpha1.MarketplaceReportData{
+		EventID:                        getAttribute(attrs, "eventId", ""),
+		IntervalStart:                  getAttributeInt64(attrs, "start", 0),
+		IntervalEnd:                    getAttributeInt64(attrs, "end", 0),
+		AccountID:                      getAttribute(attrs, "accountId", ""),
+		SubscriptionId:                 getAttribute(attrs, "subscriptionId", ""),
+		Source:                         getAttribute(attrs, "source", ""),
+		SourceSaas:                     getAttribute(attrs, "sourceSaas", ""),
+		AccountIdSaas:                  getAttribute(attrs, "accountIdSaas", ""),
+		SubscriptionIdSaas:             getAttribute(attrs, "subscriptionIdSaas", ""),
+		ProductType:                    getAttribute(attrs, "productType", ""),
+		LicensePartNumber:              getAttribute(attrs, "licensePartNumber", ""),
+		ProductId:                      getAttribute(attrs, "productId", ""),
+		SapEntitlementLine:             getAttribute(attrs, "sapEntitlementLine", ""),
+		ProductName:                    getAttribute(attrs, "productName", ""),
+		ParentProductId:                getAttribute(attrs, "parentProductId", ""),
+		ParentProductName:              getAttribute(attrs, "parentProductName", ""),
+		ParentMetricId:                 getAttribute(attrs, "parentMetricId", ""),
+		TopLevelProductId:              getAttribute(attrs, "topLevelProductId", ""),
+		TopLevelProductName:            getAttribute(attrs, "topLevelProductName", ""),
+		TopLevelProductMetricId:        getAttribute(attrs, "topLevelProductMetricId", ""),
+		DswOfferAccountingSystemCode:   getAttribute(attrs, "dswOfferAccountingSystemCode", ""),
+		DswSubscriptionAgreementNumber: getAttribute(attrs, "dswSubscriptionAgreementNumber", ""),
+		SsmSubscriptionId:              getAttribute(attrs, "ssmSubscriptionId", ""),
+		ICN:                            getAttribute(attrs, "ICN", ""),
+		Group:                          getAttribute(attrs, "group", ""),
+		GroupName:                      getAttribute(attrs, "groupName", ""),
+		Kind:                           getAttribute(attrs, "kind", ""),
+	}
 }
 
-func getAttribute(attrs pcommon.Map, key string) string {
+func getAttribute(attrs pcommon.Map, key string, defaultValue string) string {
 	val, ok := attrs.Get(key)
 	if ok {
 		return val.AsString()
 	}
-	return ""
+	return defaultValue
+}
+
+func getAttributeInt64(attrs pcommon.Map, key string, defaultValue int64) int64 {
+	val, ok := attrs.Get(key)
+	if ok {
+		return val.Int()
+	}
+	return defaultValue
 }

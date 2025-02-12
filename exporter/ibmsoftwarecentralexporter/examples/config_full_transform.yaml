@@ -10,6 +10,10 @@ receivers:
     endpoint: localhost:8088
     path: "/"
     health_path: "/health"
+  prometheus_simple:
+        collection_interval: 10s
+        use_service_account: false 
+        endpoint: "127.0.0.1:9153"
 
 exporters:
   ibmsoftwarecentral:
@@ -82,4 +86,10 @@ service:
       processors:
         - filter
         - transform
-
+    metrics:
+      receivers:
+        - prometheus_simple 
+      exporters:
+        - ibmsoftwarecentral 
+      processors:
+        - transform
