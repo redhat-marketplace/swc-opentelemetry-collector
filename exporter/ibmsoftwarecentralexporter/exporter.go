@@ -266,6 +266,7 @@ func (se *swcAccountMetricsExporter) ConsumeMetrics(ctx context.Context, metrics
 	// Iterate over the ResourceMetrics and pass each one to transformMetrics
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
 		rm := metrics.ResourceMetrics().At(i)
+		fmt.Printf("incoming resource metric: %+v\n", rm)
 		swcMetrics := transformMetrics(rm)
 
 		fmt.Printf("Transformed SWC Account Metrics: %+v\n", swcMetrics)
@@ -277,11 +278,6 @@ func (se *swcAccountMetricsExporter) ConsumeMetrics(ctx context.Context, metrics
 func transformMetrics(rm pmetric.ResourceMetrics) v3alpha1.MarketplaceReportSlice {
 	metadata := transformMetadata(rm)
 	reportDataList := constructReportData(rm)
-
-	fmt.Printf("%s", v3alpha1.MarketplaceReportSlice{
-		Metadata: metadata,
-		Metrics:  reportDataList,
-	})
 
 	return v3alpha1.MarketplaceReportSlice{
 		Metadata: metadata,

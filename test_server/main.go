@@ -60,10 +60,10 @@ func mockPrometheusMetrics() string {
 
 	// Format the mock data as Prometheus text format
 	metrics := "# HELP marketplace_report_ru Marketplace report resource usage\n"
-	metrics += "# TYPE marketplace_report_ru gauge\n"
+	metrics += "# TYPE marketplace_report_ru summary\n"
 
 	for _, usage := range report.MeasuredUsage {
-		metrics += fmt.Sprintf("marketplace_report_ru{event_id=\"%s\", product_name=\"%s\", account_email=\"%s\", metric_id=\"%s\", metric_type=\"%s\", aggregation_type=\"%s\"} %f\n",
+		metrics += fmt.Sprintf("marketplace_report_ru{event_id=\"%s\", product_name=\"%s\", account_email=\"%s\", metric_id=\"%s\", metric_type=\"%s\", aggregation_type=\"%s\", quantile=\"0.0\"} %f\n",
 			report.EventID,
 			report.ProductName,
 			report.AccountEmail,
