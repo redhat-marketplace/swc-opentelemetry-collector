@@ -4,92 +4,182 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Define the structure of the mock data as per the provided JSON format
-type MeasuredUsage struct {
-	MetricID              string  `json:"metricId"`
-	Value                 float64 `json:"value"`
-	MetricType            string  `json:"metricType"`
-	MetricAggregationType string  `json:"metricAggregationType"`
-}
+/* using a gauge vector for now but can change to summary or some other type*/
+var marketplaceReport = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "marketplace_report_ru",
+		Help: "Marketplace report resource usage",
+	},
+	[]string{
+		// MarketplaceReportData fields:
+		"eventId",   // required
+		"start",     // required (interval start in ms)
+		"end",       // required (interval end in ms)
+		"accountId", // required
+		"subscriptionId",
+		"source",
+		"sourceSaas",
+		"accountIdSaas",
+		"subscriptionIdSaas",
+		"productType",
+		"licensePartNumber",
+		"productId",
+		"sapEntitlementLine",
+		"productName",
+		"parentProductId",
+		"parentProductName",
+		"parentMetricId",
+		"topLevelProductId",
+		"topLevelProductName",
+		"topLevelProductMetricId",
+		"dswOfferAccountingSystemCode",
+		"dswSubscriptionAgreementNumber",
+		"ssmSubscriptionId",
+		"ICN",
+		"group",
+		"groupName",
+		"kind",
+		// SourceMetadata fields:
+		"clusterId",
+		"environment",
+		"version",
+		"reportVersion",
+		// MeasuredUsage fields:
+		"metricId", // required
+		"value",    // required
+		"meter_def_namespace",
+		"meter_def_name",
+		"metricType",
+		"metricAggregationType",
+		"measuredMetricId",
+		"productConversionRatio",
+		"measuredValue",
+		"hostname",
+		"pod",
+		"platformId",
+		"crn",
+		"isViewable",
+		"calculateSummary",
+	},
+)
 
-type MarketplaceReportData struct {
-	EventID                        string          `json:"eventId"`
-	Start                          int64           `json:"start"`
-	End                            int64           `json:"end"`
-	Source                         string          `json:"source"`
-	SourceSaas                     string          `json:"sourceSaas"`
-	LicensePartNumber              string          `json:"licensePartNumber"`
-	ProductID                      string          `json:"productId"`
-	ProductName                    string          `json:"productName"`
-	Icn                            string          `json:"icn"`
-	AccountEmail                   string          `json:"accountEmail"`
-	DswOfferAccountingSystemCode   string          `json:"dswOfferAccountingSystemCode"`
-	DswSubscriptionAgreementNumber string          `json:"dswSubscriptionAgreementNumber"`
-	SsmSubscriptionId              string          `json:"ssmSubscriptionId"`
-	MeasuredUsage                  []MeasuredUsage `json:"measuredUsage"`
-}
-
-// Mock function to generate data in Prometheus format
-func mockPrometheusMetrics() string {
-	report := MarketplaceReportData{
-		EventID:                        "qradar-0",
-		Start:                          time.Now().Add(-24*time.Hour).Unix() * 1000,
-		End:                            time.Now().Unix() * 1000,
-		Source:                         "ILMT",
-		SourceSaas:                     "saas-xyz",
-		LicensePartNumber:              "LPN-12345",
-		ProductID:                      "1cf12bd6e33544609cf7766abebfc8ee",
-		ProductName:                    "test product",
-		Icn:                            "icn-67890",
-		AccountEmail:                   "user@example.com",
-		DswOfferAccountingSystemCode:   "offer-xyz",
-		DswSubscriptionAgreementNumber: "sub-agreement-1234",
-		SsmSubscriptionId:              "ssm-98765",
-		MeasuredUsage: []MeasuredUsage{
-			{
-				MetricID:              "metricid",
-				Value:                 4000,
-				MetricType:            "license",
-				MetricAggregationType: "sum",
-			},
-		},
+func simulateMetrics() {
+	// --- MarketplaceReportData & SourceMetadata ---
+	labelsEvent := map[string]string{
+		"eventId":                        "eventId",       // required
+		"start":                          "1630000000000", // required
+		"end":                            "1630003600000", // required
+		"accountId":                      "account1",      // required
+		"subscriptionId":                 "sub1",
+		"source":                         "source1",
+		"sourceSaas":                     "sourceSaas1",
+		"accountIdSaas":                  "accountIdSaas1",
+		"subscriptionIdSaas":             "subscriptionIdSaas1",
+		"productType":                    "type1",
+		"licensePartNumber":              "LPN1",
+		"productId":                      "prod1",
+		"sapEntitlementLine":             "sapLine1",
+		"productName":                    "test product",
+		"parentProductId":                "parentProd1",
+		"parentProductName":              "parent product name",
+		"parentMetricId":                 "parentMetric1",
+		"topLevelProductId":              "topLevelProd1",
+		"topLevelProductName":            "top level product name",
+		"topLevelProductMetricId":        "topLevelMetric1",
+		"dswOfferAccountingSystemCode":   "offerCode1",
+		"dswSubscriptionAgreementNumber": "subscriptionAgreement1",
+		"ssmSubscriptionId":              "ssmSub1",
+		"ICN":                            "ICN1",
+		"group":                          "group1",
+		"groupName":                      "group name 1",
+		"kind":                           "kind1",
+		// SourceMetadata fields:
+		"clusterId":     "cluster1",
+		"environment":   "production",
+		"version":       "v1.0.0",
+		"reportVersion": "1",
 	}
 
-	// Format the mock data as Prometheus text format
-	metrics := "# HELP marketplace_report_ru Marketplace report resource usage\n"
-	metrics += "# TYPE marketplace_report_ru summary\n"
-
-	for _, usage := range report.MeasuredUsage {
-		metrics += fmt.Sprintf("marketplace_report_ru{event_id=\"%s\", product_name=\"%s\", account_email=\"%s\", metric_id=\"%s\", metric_type=\"%s\", aggregation_type=\"%s\", quantile=\"0.0\"} %f\n",
-			report.EventID,
-			report.ProductName,
-			report.AccountEmail,
-			usage.MetricID,
-			usage.MetricType,
-			usage.MetricAggregationType,
-			usage.Value,
-		)
+	// --- MeasuredUsage datapoint 1 fields ---
+	labelsUsage1 := map[string]string{
+		"metricId":               "usageMetric1", // required
+		"value":                  "100",          // required, as string
+		"meter_def_namespace":    "ns1",
+		"meter_def_name":         "meter1",
+		"metricType":             "license",
+		"metricAggregationType":  "sum",
+		"measuredMetricId":       "measuredMetric1",
+		"productConversionRatio": "1.0",
+		"measuredValue":          "value1",
+		"hostname":               "host1",
+		"pod":                    "pod1",
+		"platformId":             "platform1",
+		"crn":                    "crn1",
+		"isViewable":             "true",
+		"calculateSummary":       "true",
 	}
 
-	return metrics
-}
+	// --- MeasuredUsage datapoint 2 fields ---
+	labelsUsage2 := map[string]string{
+		"metricId":               "usageMetric2", // required
+		"value":                  "200",          // required, as string
+		"meter_def_namespace":    "ns2",
+		"meter_def_name":         "meter2",
+		"metricType":             "usage",
+		"metricAggregationType":  "average",
+		"measuredMetricId":       "measuredMetric2",
+		"productConversionRatio": "1.0",
+		"measuredValue":          "value2",
+		"hostname":               "host1",
+		"pod":                    "pod1",
+		"platformId":             "platform1",
+		"crn":                    "crn1",
+		"isViewable":             "true",
+		"calculateSummary":       "true",
+	}
 
-func prometheusMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	metrics := mockPrometheusMetrics()
+	marketplaceReport.Reset()
 
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(metrics))
+	// Combine event-level labels with measured usage labels for datapoint 1.
+	labels1 := make(prometheus.Labels)
+	for k, v := range labelsEvent {
+		labels1[k] = v
+	}
+	for k, v := range labelsUsage1 {
+		labels1[k] = v
+	}
+
+	// Combine event-level labels with measured usage labels for datapoint 2.
+	labels2 := make(prometheus.Labels)
+	for k, v := range labelsEvent {
+		labels2[k] = v
+	}
+	for k, v := range labelsUsage2 {
+		labels2[k] = v
+	}
+
+	// Set the gauge values for each datapoint.
+	marketplaceReport.With(labels1).Set(100)
+	marketplaceReport.With(labels2).Set(200)
 }
 
 func main() {
-	http.HandleFunc("/metrics", prometheusMetricsHandler)
+
+	simulateMetrics()
+
+	// Create a custom registry and register only our metric.
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(marketplaceReport)
+
+	http.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 
 	port := ":9153"
-	fmt.Printf("Server is running on http://localhost%s\n", port)
+	fmt.Printf("Server is running on http://localhost%s/metrics\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
