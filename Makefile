@@ -10,7 +10,7 @@ docker-build:
 
 run:
 	mkdir -p otc
-	./output/otelcol-custom --config=./exporter/ibmsoftwarecentralexporter/examples/config_full.yaml
+	./output/otelcol-custom --config=./exporter/ibmsoftwarecentralexporter/examples/config_ils.yaml
 
 add-licenses: addlicense
 	find . -type f -name "*.go" | xargs addlicense -c "IBM Corp."
