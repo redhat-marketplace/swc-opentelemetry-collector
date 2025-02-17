@@ -122,7 +122,7 @@ func newMetricsExporter(
 		return nil, fmt.Errorf("failed to initialize the metrics exporter: %w", err)
 	}
 
-	return exporterhelper.NewMetrics(ctx, params, cfg, s.ConsumeMetrics)
+	return exporterhelper.NewMetrics(ctx, params, cfg, s.pushMetrics)
 }
 
 func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
@@ -264,7 +264,7 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 /*
 type ConsumeMetricsFunc func(ctx context.Context, md pmetric.Metrics) error
 */
-func (se *swcAccountMetricsExporter) ConsumeMetrics(ctx context.Context, metrics pmetric.Metrics) error {
+func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pmetric.Metrics) error {
 	// Iterate over ResourceMetrics, ScopeMetrics, and Metrics at the top level.
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
 		rm := metrics.ResourceMetrics().At(i)
@@ -385,7 +385,6 @@ func validateMeausredUsageDataPoint(dp pmetric.NumberDataPoint) bool {
 
 // transformMetrics builds the full transformed object.
 func transformMetrics(metric pmetric.Metric) v3alpha1.MarketplaceReportSlice {
-	fmt.Println("transformMetrics")
 	reportData := transformMarketplaceReportData(metric)
 	if reportData == nil {
 		return v3alpha1.MarketplaceReportSlice{}
@@ -469,7 +468,6 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 
 // transformMeasuredUsage extracts measured usage datapoints from the metric.
 func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
-	fmt.Println("transform measured usage")
 	var usageList []v3alpha1.MeasuredUsage
 
 	convertDataPoint := func(dp pmetric.NumberDataPoint) (v3alpha1.MeasuredUsage, bool) {
