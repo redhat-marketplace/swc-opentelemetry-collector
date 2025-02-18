@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -73,66 +76,44 @@ type MeasuredUsage struct {
 	CalculateSummary       string  `json:"calculateSummary,omitempty" mapstructure:"calculateSummary"`
 }
 
-func buildEventLabels(report MarketplaceReportData, metadata SourceMetadata) map[string]string {
-	return map[string]string{
-		"eventId":                        report.EventID,
-		"start":                          strconv.FormatInt(report.IntervalStart, 10),
-		"end":                            strconv.FormatInt(report.IntervalEnd, 10),
-		"accountId":                      report.AccountID,
-		"subscriptionId":                 report.SubscriptionId,
-		"source":                         report.Source,
-		"sourceSaas":                     report.SourceSaas,
-		"accountIdSaas":                  report.AccountIdSaas,
-		"subscriptionIdSaas":             report.SubscriptionIdSaas,
-		"productType":                    report.ProductType,
-		"licensePartNumber":              report.LicensePartNumber,
-		"productId":                      report.ProductId,
-		"sapEntitlementLine":             report.SapEntitlementLine,
-		"productName":                    report.ProductName,
-		"parentProductId":                report.ParentProductId,
-		"parentProductName":              report.ParentProductName,
-		"parentMetricId":                 report.ParentMetricId,
-		"topLevelProductId":              report.TopLevelProductId,
-		"topLevelProductName":            report.TopLevelProductName,
-		"topLevelProductMetricId":        report.TopLevelProductMetricId,
-		"dswOfferAccountingSystemCode":   report.DswOfferAccountingSystemCode,
-		"dswSubscriptionAgreementNumber": report.DswSubscriptionAgreementNumber,
-		"ssmSubscriptionId":              report.SsmSubscriptionId,
-		"ICN":                            report.ICN,
-		"group":                          report.Group,
-		"groupName":                      report.GroupName,
-		"kind":                           report.Kind,
-		// SourceMetadata fields:
-		"clusterId":     metadata.ClusterID,
-		"environment":   string(metadata.Environment),
-		"version":       metadata.Version,
-		"reportVersion": metadata.ReportVersion,
+// structToMap converts a struct to a map[string]string using the `json` tag.
+func structToMap(v interface{}) map[string]string {
+	m := make(map[string]string)
+	val := reflect.ValueOf(v)
+	typ := reflect.TypeOf(v)
+	if typ.Kind() == reflect.Ptr {
+		val = val.Elem()
+		typ = typ.Elem()
 	}
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		key := tag
+		if comma := strings.Index(tag, ","); comma != -1 {
+			key = tag[:comma]
+		}
+		fieldVal := val.Field(i)
+		var str string
+		switch fieldVal.Kind() {
+		case reflect.String:
+			str = fieldVal.String()
+		case reflect.Int, reflect.Int64:
+			str = strconv.FormatInt(fieldVal.Int(), 10)
+		case reflect.Float64:
+			str = strconv.FormatFloat(fieldVal.Float(), 'f', -1, 64)
+		default:
+			str = fmt.Sprintf("%v", fieldVal.Interface())
+		}
+		m[key] = str
+	}
+	return m
 }
 
-func buildUsageLabels(usage MeasuredUsage) map[string]string {
-	return map[string]string{
-		"metricId":               usage.MetricID,
-		"value":                  fmt.Sprintf("%.0f", usage.Value),
-		"meter_def_namespace":    usage.MeterDefNamespace,
-		"meter_def_name":         usage.MeterDefName,
-		"metricType":             usage.MetricType,
-		"metricAggregationType":  usage.MetricAggregationType,
-		"measuredMetricId":       usage.MeasuredMetricId,
-		"productConversionRatio": usage.ProductConversionRatio,
-		"measuredValue":          usage.MeasuredValue,
-		"hostname":               usage.Hostname,
-		"pod":                    usage.Pod,
-		"platformId":             usage.PlatformId,
-		"crn":                    usage.Crn,
-		"isViewable":             usage.IsViewable,
-		"calculateSummary":       usage.CalculateSummary,
-	}
-}
-
-// mergeLabels merges two maps into a new map.
-func mergeLabels(a, b map[string]string) prometheus.Labels {
-	merged := make(prometheus.Labels)
+func mergeMaps(a, b map[string]string) map[string]string {
+	merged := make(map[string]string)
 	for k, v := range a {
 		merged[k] = v
 	}
@@ -142,80 +123,109 @@ func mergeLabels(a, b map[string]string) prometheus.Labels {
 	return merged
 }
 
-func simulateMetrics(report MarketplaceReportData, metadata SourceMetadata, usages []MeasuredUsage, metricType string) prometheus.Collector {
-	eventLabels := buildEventLabels(report, metadata)
+type mockCollector struct {
+	report     MarketplaceReportData
+	metadata   SourceMetadata
+	usages     []MeasuredUsage
+	metricType string
 
-	// Define the label names (order must match the Collector creation).
-	labelNames := []string{
-		// MarketplaceReportData fields:
-		"eventId", "start", "end", "accountId", "subscriptionId", "source", "sourceSaas", "accountIdSaas", "subscriptionIdSaas",
-		"productType", "licensePartNumber", "productId", "sapEntitlementLine", "productName", "parentProductId", "parentProductName",
-		"parentMetricId", "topLevelProductId", "topLevelProductName", "topLevelProductMetricId", "dswOfferAccountingSystemCode",
-		"dswSubscriptionAgreementNumber", "ssmSubscriptionId", "ICN", "group", "groupName", "kind",
-		// SourceMetadata fields:
-		"clusterId", "environment", "version", "reportVersion",
-		// MeasuredUsage fields:
-		"metricId", "value", "meter_def_namespace", "meter_def_name", "metricType", "metricAggregationType",
-		"measuredMetricId", "productConversionRatio", "measuredValue", "hostname", "pod", "platformId", "crn", "isViewable", "calculateSummary",
+	eventLabels        map[string]string
+	combinedLabelNames []string
+	collector          prometheus.Collector
+}
+
+// buildEventLabels converts the report and metadata into event-level labels.
+func (mc *mockCollector) buildEventLabels() {
+	mc.eventLabels = mergeMaps(structToMap(mc.report), structToMap(mc.metadata))
+}
+
+// buildWithUsageLabels builds the union of label names from event-level data and usage data.
+func (mc *mockCollector) buildWithUsageLabels() {
+	union := make(map[string]struct{})
+	for k := range mc.eventLabels {
+		union[k] = struct{}{}
 	}
+	if len(mc.usages) > 0 {
+		usageMap := structToMap(mc.usages[0])
+		for k := range usageMap {
+			union[k] = struct{}{}
+		}
+	}
+	var keys []string
+	for k := range union {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	mc.combinedLabelNames = keys
+}
 
-	var collector prometheus.Collector
-	switch metricType {
+// createCollector creates the Prometheus collector based on the metricType and label names.
+func (mc *mockCollector) createCollector() {
+	switch mc.metricType {
 	case "gauge":
-		collector = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		mc.collector = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "marketplace_report_ru",
 			Help: "Marketplace report resource usage",
-		}, labelNames)
+		}, mc.combinedLabelNames)
 	case "summary":
-		collector = prometheus.NewSummaryVec(prometheus.SummaryOpts{
+		mc.collector = prometheus.NewSummaryVec(prometheus.SummaryOpts{
 			Name: "marketplace_report_ru",
 			Help: "Marketplace report resource usage",
-		}, labelNames)
+		}, mc.combinedLabelNames)
 	case "counter":
-		collector = prometheus.NewCounterVec(prometheus.CounterOpts{
+		mc.collector = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "marketplace_report_ru",
 			Help: "Marketplace report resource usage",
-		}, labelNames)
+		}, mc.combinedLabelNames)
 	default:
-		log.Printf("Unsupported metric type '%s', defaulting to gauge", metricType)
-		collector = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		log.Printf("Unsupported metric type '%s', defaulting to gauge", mc.metricType)
+		mc.collector = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "marketplace_report_ru",
 			Help: "Marketplace report resource usage",
-		}, labelNames)
+		}, mc.combinedLabelNames)
 	}
+}
 
-	switch metricType {
+// setMetricValues sets the metric values on the collector by merging event-level labels with usage labels.
+func (mc *mockCollector) setMetricValues() {
+	switch mc.metricType {
 	case "gauge":
-		vec := collector.(*prometheus.GaugeVec)
-		for _, usage := range usages {
-			usageLabels := buildUsageLabels(usage)
-			merged := mergeLabels(eventLabels, usageLabels)
+		vec := mc.collector.(*prometheus.GaugeVec)
+		for _, usage := range mc.usages {
+			usageLabels := structToMap(usage)
+			merged := mergeMaps(mc.eventLabels, usageLabels)
 			vec.With(merged).Set(usage.Value)
 		}
 	case "summary":
-		vec := collector.(*prometheus.SummaryVec)
-		for _, usage := range usages {
-			usageLabels := buildUsageLabels(usage)
-			merged := mergeLabels(eventLabels, usageLabels)
+		vec := mc.collector.(*prometheus.SummaryVec)
+		for _, usage := range mc.usages {
+			usageLabels := structToMap(usage)
+			merged := mergeMaps(mc.eventLabels, usageLabels)
 			vec.With(merged).Observe(usage.Value)
 		}
 	case "counter":
-		vec := collector.(*prometheus.CounterVec)
-		for _, usage := range usages {
-			usageLabels := buildUsageLabels(usage)
-			merged := mergeLabels(eventLabels, usageLabels)
+		vec := mc.collector.(*prometheus.CounterVec)
+		for _, usage := range mc.usages {
+			usageLabels := structToMap(usage)
+			merged := mergeMaps(mc.eventLabels, usageLabels)
 			vec.With(merged).Add(usage.Value)
 		}
 	default:
-		vec := collector.(*prometheus.GaugeVec)
-		for _, usage := range usages {
-			usageLabels := buildUsageLabels(usage)
-			merged := mergeLabels(eventLabels, usageLabels)
+		vec := mc.collector.(*prometheus.GaugeVec)
+		for _, usage := range mc.usages {
+			usageLabels := structToMap(usage)
+			merged := mergeMaps(mc.eventLabels, usageLabels)
 			vec.With(merged).Set(usage.Value)
 		}
 	}
+}
 
-	return collector
+func (mc *mockCollector) BuildCollector() prometheus.Collector {
+	mc.buildEventLabels()
+	mc.buildWithUsageLabels()
+	mc.createCollector()
+	mc.setMetricValues()
+	return mc.collector
 }
 
 func main() {
@@ -263,7 +273,7 @@ func main() {
 			Value:                  100,
 			MeterDefNamespace:      "ns1",
 			MeterDefName:           "meter1",
-			MetricType:             "license", // Although we may override this in transformation
+			MetricType:             "license", // can be overridden by transformation if needed
 			MetricAggregationType:  "sum",
 			MeasuredMetricId:       "measuredMetric1",
 			ProductConversionRatio: "1.0",
@@ -294,10 +304,17 @@ func main() {
 		},
 	}
 
-	// Choose the metric type: "gauge", "summary", or "counter"
-	metricType := "gauge"
+	// Choose the metric type: "gauge", "summary", or "counter".
+	metricType := "gauge" // change as needed
 
-	collector := simulateMetrics(report, metadata, usages, metricType)
+	mc := mockCollector{
+		report:     report,
+		metadata:   metadata,
+		usages:     usages,
+		metricType: metricType,
+	}
+
+	collector := mc.BuildCollector()
 
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
