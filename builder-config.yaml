@@ -6,11 +6,12 @@ extensions:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/bearertokenauthextension v0.119.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage v0.119.0
 exporters:
-  - gomod: github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter df72184
+  - gomod: github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter 069c9c3 
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.119.0
 receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/webhookeventreceiver v0.119.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.119.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/simpleprometheusreceiver v0.119.0
 processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.119.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/metricstransformprocessor v0.119.0
