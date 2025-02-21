@@ -23,25 +23,48 @@ import (
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  *Config
-		err  string
+		name    string
+		cfg     *Config
+		wantErr bool
+		errMsg  string
 	}{
 		{
-			name: "invalid Endpoint",
+			name: "invalid endpoint - bad escape",
 			cfg: &Config{
 				ClientConfig: confighttp.ClientConfig{
 					Endpoint: "http://bad\\escape",
 				},
 			},
-			err: "invalid endpoint: endpoint is required but it is not configured",
+			wantErr: true,
+			errMsg:  "invalid endpoint: endpoint is required but it is not configured",
+		},
+		{
+			name: "empty endpoint",
+			cfg: &Config{
+				ClientConfig: confighttp.ClientConfig{
+					Endpoint: "",
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid endpoint: endpoint is required but it is not configured",
+		},
+		{
+			name: "valid endpoint",
+			cfg: &Config{
+				ClientConfig: confighttp.ClientConfig{
+					Endpoint: DefaultEndpoint,
+				},
+			},
+			wantErr: false,
 		},
 	}
-	for _, testInstance := range tests {
-		t.Run(testInstance.name, func(t *testing.T) {
-			err := testInstance.cfg.Validate()
-			if testInstance.err != "" {
-				assert.EqualError(t, err, testInstance.err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				assert.NoError(t, err)
 			}

@@ -39,7 +39,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type ibmsoftwarecentralexporter struct {
+type baseExporter struct {
 	config            *Config
 	telemetrySettings component.TelemetrySettings
 	logger            *zap.Logger
@@ -47,58 +47,126 @@ type ibmsoftwarecentralexporter struct {
 	tarGzipPool       *TarGzipPool
 }
 
+// sendData encapsulates the common sending logic.
+func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent interface{}) error {
+	id := uuid.New()
+	archive, err := be.tarGzipPool.TGZ(id.String(), manifestBytes, payloadBytes)
+	if err != nil {
+		return err
+	}
+
+	archiveReader := bytes.NewBuffer(archive)
+	reqBody := &bytes.Buffer{}
+	writer := multipart.NewWriter(reqBody)
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="isce-%s"; filename="isce-%s.tar.gz"`, id, id))
+	h.Set("Content-Type", "application/gzip")
+
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(part, archiveReader)
+	if err != nil {
+		return err
+	}
+
+	if err = writer.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, be.config.Endpoint, reqBody)
+	if err != nil {
+		switch data := incumbent.(type) {
+		case plog.Logs:
+			return consumererror.NewLogs(err, data)
+		case pmetric.Metrics:
+			return err
+		default:
+			return err
+		}
+	}
+
+	for k, v := range be.config.ClientConfig.Headers {
+		req.Header.Set(k, string(v))
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	if be.client == nil {
+		be.client = http.DefaultClient
+	}
+
+	res, err := be.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+
+	if err = res.Body.Close(); err != nil {
+		return err
+	}
+
+	rerr := fmt.Errorf("remote write returned HTTP status %v; err = %w: %s", res.Status, err, string(resBody))
+	switch {
+	case res.StatusCode >= 200 && res.StatusCode < 300:
+		return nil
+	case res.StatusCode >= 500 && res.StatusCode < 600:
+		return rerr
+	case res.StatusCode == http.StatusTooManyRequests:
+		return rerr
+	default:
+		return consumererror.NewPermanent(fmt.Errorf("line protocol write returned %q %q", res.Status, string(resBody)))
+	}
+}
+
+type ibmsoftwarecentralexporter struct {
+	baseExporter
+}
+
 type swcAccountMetricsExporter struct {
-	config            *Config
-	telemetrySettings component.TelemetrySettings
-	logger            *zap.Logger
-	client            *http.Client
-	tarGzipPool       *TarGzipPool
+	baseExporter
 }
 
 func initExporter(cfg *Config, createSettings exporter.Settings) (*ibmsoftwarecentralexporter, error) {
 	tarGzipPool := &TarGzipPool{}
-
 	se := &ibmsoftwarecentralexporter{
-		config:            cfg,
-		telemetrySettings: createSettings.TelemetrySettings,
-		logger:            createSettings.Logger,
-		tarGzipPool:       tarGzipPool,
+		baseExporter: baseExporter{
+			config:            cfg,
+			telemetrySettings: createSettings.TelemetrySettings,
+			logger:            createSettings.Logger,
+			tarGzipPool:       tarGzipPool,
+		},
 	}
-
-	se.logger.Info("IBM Software Central Exporter configured",
-		zap.String("endpoint", cfg.Endpoint),
-	)
-
+	se.logger.Info("IBM Software Central Exporter configured", zap.String("endpoint", cfg.Endpoint))
 	return se, nil
 }
 
 func initSWCAccountMetricsExporter(cfg *Config, createSettings exporter.Settings) (*swcAccountMetricsExporter, error) {
 	tarGzipPool := &TarGzipPool{}
-
 	se := &swcAccountMetricsExporter{
-		config:            cfg,
-		telemetrySettings: createSettings.TelemetrySettings,
-		logger:            createSettings.Logger,
-		tarGzipPool:       tarGzipPool,
+		baseExporter: baseExporter{
+			config:            cfg,
+			telemetrySettings: createSettings.TelemetrySettings,
+			logger:            createSettings.Logger,
+			tarGzipPool:       tarGzipPool,
+		},
 	}
-
-	se.logger.Info("SWC Account Metrics Exporter configured",
-		zap.String("endpoint", cfg.Endpoint),
-	)
-
+	se.logger.Info("SWC Account Metrics Exporter configured", zap.String("endpoint", cfg.Endpoint))
 	return se, nil
 }
 
-func newLogsExporter(
-	ctx context.Context,
-	params exporter.Settings,
-	cfg *Config,
-) (exporter.Logs, error) {
+func newLogsExporter(ctx context.Context, params exporter.Settings, cfg *Config) (exporter.Logs, error) {
 	s, err := initExporter(cfg, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the logs exporter: %w", err)
 	}
-
 	return exporterhelper.NewLogs(
 		ctx,
 		params,
@@ -112,30 +180,20 @@ func newLogsExporter(
 	)
 }
 
-func newMetricsExporter(
-	ctx context.Context,
-	params exporter.Settings,
-	cfg *Config,
-) (exporter.Metrics, error) {
+func newMetricsExporter(ctx context.Context, params exporter.Settings, cfg *Config) (exporter.Metrics, error) {
 	s, err := initSWCAccountMetricsExporter(cfg, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the metrics exporter: %w", err)
 	}
-
 	return exporterhelper.NewMetrics(ctx, params, cfg, s.pushMetrics)
 }
 
 func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
 	if se.config.ClientConfig.Auth != nil {
-		se.logger.Debug("auth",
-			zap.String("clientConfig.Auth", fmt.Sprint(se.config.ClientConfig.Auth)),
-		)
+		se.logger.Debug("auth", zap.String("clientConfig.Auth", fmt.Sprint(se.config.ClientConfig.Auth)))
 	} else {
-		se.logger.Debug("auth",
-			zap.String("clientConfig.Auth", "isNil"),
-		)
+		se.logger.Debug("auth", zap.String("clientConfig.Auth", "isNil"))
 	}
-
 	se.client, err = se.config.ClientConfig.ToClient(ctx, host, se.telemetrySettings)
 	return err
 }
@@ -148,142 +206,90 @@ func (se *ibmsoftwarecentralexporter) shutdown(context.Context) error {
 }
 
 func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plog.Logs) error {
-
 	eventJsons := []json.RawMessage{}
-
 	for i := 0; i < logs.ResourceLogs().Len(); i++ {
 		resourceLogs := logs.ResourceLogs().At(i)
 		for j := 0; j < resourceLogs.ScopeLogs().Len(); j++ {
 			scopeLogs := resourceLogs.ScopeLogs().At(j)
 			for k := 0; k < scopeLogs.LogRecords().Len(); k++ {
 				logRecord := scopeLogs.LogRecords().At(k)
-				se.logger.Debug("logRecord",
-					zap.String("logRecord.Body().AsString()", logRecord.Body().AsString()),
-				)
+				se.logger.Debug("logRecord", zap.String("body", logRecord.Body().AsString()))
 				b := []byte(logRecord.Body().AsString())
 				if json.Valid(b) {
 					eventJsons = append(eventJsons, b)
 				} else {
-					se.logger.Debug("logRecord was not json",
-						zap.String("logRecord.Body().AsString()", logRecord.Body().AsString()),
-					)
+					se.logger.Debug("logRecord was not json", zap.String("body", logRecord.Body().AsString()))
 				}
 			}
 		}
 	}
-
 	if len(eventJsons) > 0 {
-		metadata := make(Metadata)
-		reportData := ReportData{Metadata: metadata, EventJsons: eventJsons}
-		reportDataBytes, err := json.Marshal(reportData)
+		reportDataBytes, manifestBytes, err := se.buildLogsPayload(eventJsons)
 		if err != nil {
 			return err
 		}
-
-		se.logger.Debug("report",
-			zap.String("data", string(reportDataBytes)),
-		)
-
-		manifest := Manifest{Type: "dataReporter", Version: "1"}
-		manifestBytes, err := json.Marshal(manifest)
-		if err != nil {
-			return err
-		}
-
-		se.logger.Debug("report",
-			zap.String("manifest", string(manifestBytes)),
-		)
-
-		id := uuid.New()
-
-		archive, err := se.tarGzipPool.TGZ(id.String(), manifestBytes, reportDataBytes)
-		if err != nil {
-			return err
-		}
-
-		archiveReader := bytes.NewBuffer(archive)
-		reqBody := &bytes.Buffer{}
-		writer := multipart.NewWriter(reqBody)
-
-		h := make(textproto.MIMEHeader)
-		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="isce-%s"; filename="isce-%s.tar.gz"`, id, id))
-		h.Set("Content-Type", "application/gzip")
-
-		part, err := writer.CreatePart(h)
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(part, archiveReader)
-		if err != nil {
-			return err
-		}
-
-		err = writer.Close()
-		if err != nil {
-			return err
-		}
-
-		req, err := http.NewRequest(http.MethodPost, se.config.Endpoint, reqBody)
-		if err != nil {
-			return consumererror.NewLogs(err, logs)
-		}
-		for k, v := range se.config.ClientConfig.Headers {
-			req.Header.Set(k, string(v))
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-
-		res, err := se.client.Do(req)
-		if err != nil {
-			return err
-		}
-
-		resBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-		if err = res.Body.Close(); err != nil {
-			return err
-		}
-		rerr := fmt.Errorf("remote write returned HTTP status %v; err = %w: %s", res.Status, err, string(resBody))
-		switch {
-		case res.StatusCode >= 200 && res.StatusCode < 300: // Success
-			break
-		case res.StatusCode >= 500 && res.StatusCode < 600: // Retryable error
-			return rerr
-		case res.StatusCode == http.StatusTooManyRequests: // Retryable error
-			return rerr
-		default: // Terminal error
-			return consumererror.NewPermanent(fmt.Errorf("line protocol write returned %q %q", res.Status, string(resBody)))
-		}
+		return se.sendData(reportDataBytes, manifestBytes, logs)
 	}
 	return nil
-
 }
 
-/*
-type ConsumeMetricsFunc func(ctx context.Context, md pmetric.Metrics) error
-*/
+func (se *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMessage) ([]byte, []byte, error) {
+	metadata := make(Metadata)
+	reportData := ReportData{Metadata: metadata, EventJsons: eventJsons}
+	reportDataBytes, err := json.Marshal(reportData)
+	if err != nil {
+		return nil, nil, err
+	}
+	se.logger.Debug("report data", zap.String("data", string(reportDataBytes)))
+	manifest := Manifest{Type: "dataReporter", Version: "1"}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reportDataBytes, manifestBytes, nil
+}
+
+// pushMetrics iterates over metrics, transforms them, and sends the transformed metrics using sendData.
 func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pmetric.Metrics) error {
-	// Iterate over ResourceMetrics, ScopeMetrics, and Metrics at the top level.
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
 		rm := metrics.ResourceMetrics().At(i)
 		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
 			scopeMetrics := rm.ScopeMetrics().At(j)
 			for k := 0; k < scopeMetrics.Metrics().Len(); k++ {
 				metric := scopeMetrics.Metrics().At(k)
-				fmt.Println("metric type:", metric.Type().String())
-
+				se.logger.Info("Processing metric", zap.String("metric name", metric.Name()))
 				if !validate(metric) {
 					continue
 				}
-
 				swcMetrics := transformMetrics(metric)
 				printTransformedMetrics(swcMetrics)
+				data, manifestBytes, err := se.buildMetricsPayload(swcMetrics)
+				if err != nil {
+					se.logger.Error("failed to marshal transformed metrics", zap.Error(err))
+					continue
+				}
+				if err := se.sendData(data, manifestBytes, metrics); err != nil {
+					se.logger.Error("failed to send transformed metrics", zap.Error(err))
+					continue
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func (se *swcAccountMetricsExporter) buildMetricsPayload(swcMetrics v3alpha1.MarketplaceReportSlice) ([]byte, []byte, error) {
+	data, err := json.Marshal(swcMetrics)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest := Manifest{Type: "metricsReporter", Version: "1"}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	se.logger.Debug("metrics data", zap.String("data", string(data)))
+	return data, manifestBytes, nil
 }
 
 func validate(metric pmetric.Metric) bool {
