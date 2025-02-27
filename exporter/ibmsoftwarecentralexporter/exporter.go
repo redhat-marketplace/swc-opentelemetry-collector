@@ -1,3 +1,4 @@
+// exporter.go
 // Copyright 2025 IBM Corp.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ibmsoftwarecentralexporter // import "github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter"
+package ibmsoftwarecentralexporter
 
 import (
 	"bytes"
@@ -20,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -92,13 +92,13 @@ func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent i
 	for k, v := range be.config.ClientConfig.Headers {
 		req.Header.Set(k, string(v))
 	}
-
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	if be.client == nil {
 		be.client = http.DefaultClient
 	}
 
+	be.logger.Debug("Sending request", zap.String("endpoint", be.config.Endpoint))
 	res, err := be.client.Do(req)
 	if err != nil {
 		return err
@@ -198,7 +198,7 @@ func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.
 	return err
 }
 
-func (se *ibmsoftwarecentralexporter) shutdown(context.Context) error {
+func (se *ibmsoftwarecentralexporter) shutdown(ctx context.Context) error {
 	if se.client != nil {
 		se.client.CloseIdleConnections()
 	}
@@ -249,7 +249,7 @@ func (se *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMess
 	return reportDataBytes, manifestBytes, nil
 }
 
-// pushMetrics iterates over metrics, transforms them, and sends the transformed metrics using sendData.
+// pushMetrics iterates over metrics, validates them, transforms them, and sends them.
 func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pmetric.Metrics) error {
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
 		rm := metrics.ResourceMetrics().At(i)
@@ -258,16 +258,20 @@ func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pm
 			for k := 0; k < scopeMetrics.Metrics().Len(); k++ {
 				metric := scopeMetrics.Metrics().At(k)
 				se.logger.Info("Processing metric", zap.String("metric name", metric.Name()))
-				if !validate(metric) {
+
+				if errs := validate(metric); len(errs) > 0 {
+					se.logger.Debug("Validation errors", zap.Strings("errors", errs))
 					continue
 				}
+
 				swcMetrics := transformMetrics(metric)
-				printTransformedMetrics(swcMetrics)
+				logTransformedMetrics(se.logger, swcMetrics)
 				data, manifestBytes, err := se.buildMetricsPayload(swcMetrics)
 				if err != nil {
 					se.logger.Error("failed to marshal transformed metrics", zap.Error(err))
 					continue
 				}
+
 				if err := se.sendData(data, manifestBytes, metrics); err != nil {
 					se.logger.Error("failed to send transformed metrics", zap.Error(err))
 					continue
@@ -288,113 +292,118 @@ func (se *swcAccountMetricsExporter) buildMetricsPayload(swcMetrics v3alpha1.Mar
 	if err != nil {
 		return nil, nil, err
 	}
-	se.logger.Debug("metrics data", zap.String("data", string(data)))
+	se.logger.Debug("metrics data payload", zap.String("data", string(data)))
 	return data, manifestBytes, nil
 }
 
-func validate(metric pmetric.Metric) bool {
-	if !validateReportDataFields(metric) {
-		return false
+// validate runs both report data and measured usage validations,
+// returning a slice of error messages (empty if no errors).
+func validate(metric pmetric.Metric) []string {
+	var errs []string
+	switch metric.Type() {
+	case pmetric.MetricTypeGauge, pmetric.MetricTypeSum:
+		// Supported types.
+	default:
+		errs = append(errs, fmt.Sprintf("unsupported metric type: %s", metric.Type().String()))
+		return errs
 	}
-	if !validateMeasuredUsage(metric) {
-		return false
-	}
-	return true
+	errs = append(errs, validateReportDataFields(metric)...)
+	errs = append(errs, validateMeasuredUsage(metric)...)
+	return errs
 }
 
-// validateReportDataFields checks that the required top-level fields (eventId, start, end, accountId)
-// exist in the first datapoint's attribute map.
-func validateReportDataFields(metric pmetric.Metric) bool {
+func validateReportDataFields(metric pmetric.Metric) []string {
+	var errs []string
 	var attrs pcommon.Map
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		if metric.Gauge().DataPoints().Len() > 0 {
 			attrs = metric.Gauge().DataPoints().At(0).Attributes()
 		} else {
-			log.Printf("Dropping metric: no gauge datapoints available")
-			return false
+			errs = append(errs, "no gauge datapoints available")
+			return errs
 		}
 	case pmetric.MetricTypeSum:
 		if metric.Sum().DataPoints().Len() > 0 {
 			attrs = metric.Sum().DataPoints().At(0).Attributes()
 		} else {
-			log.Printf("Dropping metric: no sum datapoints available")
-			return false
+			errs = append(errs, "no sum datapoints available")
+			return errs
 		}
-	default:
-		log.Printf("Dropping metric: unsupported metric type: %s", metric.Type().String())
-		return false
 	}
 
-	var missing []string
 	if getAttribute(attrs, "eventId", "") == "" {
-		missing = append(missing, "eventId")
+		errs = append(errs, "missing field: eventId")
 	}
 	if getAttributeInt64(attrs, "start", 0) == 0 {
-		missing = append(missing, "start")
+		errs = append(errs, "missing field: start")
 	}
 	if getAttributeInt64(attrs, "end", 0) == 0 {
-		missing = append(missing, "end")
+		errs = append(errs, "missing field: end")
 	}
 	if getAttribute(attrs, "accountId", "") == "" {
-		missing = append(missing, "accountId")
+		errs = append(errs, "missing field: accountId")
 	}
-	if len(missing) > 0 {
-		log.Printf("Dropping metric due to missing usage event fields: %v", missing)
-		return false
-	}
-	return true
+
+	return errs
 }
 
-func validateMeasuredUsage(metric pmetric.Metric) bool {
-	validDPCount := 0
+func validateMeasuredUsage(metric pmetric.Metric) []string {
+	var errs []string
+	var valid bool
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
-		for i := 0; i < metric.Gauge().DataPoints().Len(); i++ {
-			if validateMeausredUsageDataPoint(metric.Gauge().DataPoints().At(i)) {
-				validDPCount++
+		if metric.Gauge().DataPoints().Len() == 0 {
+			errs = append(errs, "no valid measured usage datapoints available: at least one datapoint must include both a non-empty 'metricId' and a valid 'value'")
+		} else {
+			for i := 0; i < metric.Gauge().DataPoints().Len(); i++ {
+				dp := metric.Gauge().DataPoints().At(i)
+				dpErrs := validateMeasuredUsageDataPoint(dp)
+				if len(dpErrs) == 0 {
+					valid = true
+				} else {
+					errs = append(errs, fmt.Sprintf("Gauge data point %d missing: %v", i, dpErrs))
+				}
 			}
 		}
 	case pmetric.MetricTypeSum:
-		for i := 0; i < metric.Sum().DataPoints().Len(); i++ {
-			if validateMeausredUsageDataPoint(metric.Sum().DataPoints().At(i)) {
-				validDPCount++
+		if metric.Sum().DataPoints().Len() == 0 {
+			errs = append(errs, "no valid measured usage datapoints available: at least one datapoint must include both a non-empty 'metricId' and a valid 'value'")
+		} else {
+			for i := 0; i < metric.Sum().DataPoints().Len(); i++ {
+				dp := metric.Sum().DataPoints().At(i)
+				dpErrs := validateMeasuredUsageDataPoint(dp)
+				if len(dpErrs) == 0 {
+					valid = true
+				} else {
+					errs = append(errs, fmt.Sprintf("Sum data point %d missing: %v", i, dpErrs))
+				}
 			}
 		}
-	default:
-		log.Printf("Unsupported metric type: %s", metric.Type().String())
-		return false
 	}
-	if validDPCount == 0 {
-		log.Printf("Dropping metric: no measured usage datapoints passed validation (missing metricId and/or value)")
-		return false
+	if valid {
+		// At least one datapoint passed validation.
+		return []string{}
 	}
-	return true
+	return errs
 }
 
-func validateMeausredUsageDataPoint(dp pmetric.NumberDataPoint) bool {
+func validateMeasuredUsageDataPoint(dp pmetric.NumberDataPoint) []string {
+	var errs []string
 	attrs := dp.Attributes()
-	missing := []string{}
 	if getDPAttribute(attrs, "metricId", "") == "" {
-		missing = append(missing, "metricId")
+		errs = append(errs, "missing field: metricId")
 	}
-	_, hasValue := attrs.Get("value")
-	if !hasValue {
-		missing = append(missing, "value")
+	if _, ok := attrs.Get("value"); !ok {
+		errs = append(errs, "missing field: value")
 	}
-	if len(missing) > 0 {
-		log.Printf("Dropping measured usage datapoint: missing required fields: %v", missing)
-		return false
-	}
-	return true
+	return errs
 }
 
 // transformMetrics builds the full transformed object.
 func transformMetrics(metric pmetric.Metric) v3alpha1.MarketplaceReportSlice {
 	reportData := transformMarketplaceReportData(metric)
-	if reportData == nil {
-		return v3alpha1.MarketplaceReportSlice{}
-	}
+	// We assume validation has passed, so reportData is not nil.
 	reportData.MeasuredUsage = transformMeasuredUsage(metric)
 	return v3alpha1.MarketplaceReportSlice{
 		Metadata: buildSourceMetadata(metric),
@@ -426,7 +435,6 @@ func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
 }
 
 // transformMarketplaceReportData extracts event-level fields from the first datapoint's attributes.
-// We assume validation has already ensured required fields are present.
 func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.MarketplaceReportData {
 	var attrs pcommon.Map
 	switch metric.Type() {
@@ -475,54 +483,56 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 // transformMeasuredUsage extracts measured usage datapoints from the metric.
 func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
 	var usageList []v3alpha1.MeasuredUsage
-
-	convertDataPoint := func(dp pmetric.NumberDataPoint) (v3alpha1.MeasuredUsage, bool) {
-		attrs := dp.Attributes()
-		return v3alpha1.MeasuredUsage{
-			MetricID:               getDPAttribute(attrs, "metricId", ""),
-			Value:                  getFloat64FromAttribute(attrs, "value", dp.DoubleValue()),
-			MeterDefNamespace:      getDPAttribute(attrs, "meter_def_namespace", ""),
-			MeterDefName:           getDPAttribute(attrs, "meter_def_name", ""),
-			MetricType:             getDPAttribute(attrs, "metricType", ""),
-			MetricAggregationType:  getDPAttribute(attrs, "metricAggregationType", ""),
-			MeasuredMetricId:       getDPAttribute(attrs, "measuredMetricId", ""),
-			ProductConversionRatio: getDPAttribute(attrs, "productConversionRatio", ""),
-			MeasuredValue:          getDPAttribute(attrs, "measuredValue", ""),
-			ClusterId:              getDPAttribute(attrs, "clusterId", ""),
-			Hostname:               getDPAttribute(attrs, "hostname", ""),
-			Pod:                    getDPAttribute(attrs, "pod", ""),
-			PlatformId:             getDPAttribute(attrs, "platformId", ""),
-			Crn:                    getDPAttribute(attrs, "crn", ""),
-			IsViewable:             getDPAttribute(attrs, "isViewable", ""),
-			CalculateSummary:       getDPAttribute(attrs, "calculateSummary", ""),
-		}, true
-	}
-
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		g := metric.Gauge()
 		for i := 0; i < g.DataPoints().Len(); i++ {
 			dp := g.DataPoints().At(i)
-			if usage, ok := convertDataPoint(dp); ok {
-				usageList = append(usageList, usage)
-			} else {
-				log.Printf("Dropping measured usage datapoint due to missing required fields (metricId and/or value)")
+			usage := v3alpha1.MeasuredUsage{
+				MetricID:               getDPAttribute(dp.Attributes(), "metricId", ""),
+				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
+				MeterDefNamespace:      getDPAttribute(dp.Attributes(), "meter_def_namespace", ""),
+				MeterDefName:           getDPAttribute(dp.Attributes(), "meter_def_name", ""),
+				MetricType:             getDPAttribute(dp.Attributes(), "metricType", ""),
+				MetricAggregationType:  getDPAttribute(dp.Attributes(), "metricAggregationType", ""),
+				MeasuredMetricId:       getDPAttribute(dp.Attributes(), "measuredMetricId", ""),
+				ProductConversionRatio: getDPAttribute(dp.Attributes(), "productConversionRatio", ""),
+				MeasuredValue:          getDPAttribute(dp.Attributes(), "measuredValue", ""),
+				ClusterId:              getDPAttribute(dp.Attributes(), "clusterId", ""),
+				Hostname:               getDPAttribute(dp.Attributes(), "hostname", ""),
+				Pod:                    getDPAttribute(dp.Attributes(), "pod", ""),
+				PlatformId:             getDPAttribute(dp.Attributes(), "platformId", ""),
+				Crn:                    getDPAttribute(dp.Attributes(), "crn", ""),
+				IsViewable:             getDPAttribute(dp.Attributes(), "isViewable", ""),
+				CalculateSummary:       getDPAttribute(dp.Attributes(), "calculateSummary", ""),
 			}
+			usageList = append(usageList, usage)
 		}
 	case pmetric.MetricTypeSum:
 		s := metric.Sum()
 		for i := 0; i < s.DataPoints().Len(); i++ {
 			dp := s.DataPoints().At(i)
-			if usage, ok := convertDataPoint(dp); ok {
-				usageList = append(usageList, usage)
-			} else {
-				log.Printf("Dropping measured usage datapoint due to missing required fields (metricId and/or value)")
+			usage := v3alpha1.MeasuredUsage{
+				MetricID:               getDPAttribute(dp.Attributes(), "metricId", ""),
+				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
+				MeterDefNamespace:      getDPAttribute(dp.Attributes(), "meter_def_namespace", ""),
+				MeterDefName:           getDPAttribute(dp.Attributes(), "meter_def_name", ""),
+				MetricType:             getDPAttribute(dp.Attributes(), "metricType", ""),
+				MetricAggregationType:  getDPAttribute(dp.Attributes(), "metricAggregationType", ""),
+				MeasuredMetricId:       getDPAttribute(dp.Attributes(), "measuredMetricId", ""),
+				ProductConversionRatio: getDPAttribute(dp.Attributes(), "productConversionRatio", ""),
+				MeasuredValue:          getDPAttribute(dp.Attributes(), "measuredValue", ""),
+				ClusterId:              getDPAttribute(dp.Attributes(), "clusterId", ""),
+				Hostname:               getDPAttribute(dp.Attributes(), "hostname", ""),
+				Pod:                    getDPAttribute(dp.Attributes(), "pod", ""),
+				PlatformId:             getDPAttribute(dp.Attributes(), "platformId", ""),
+				Crn:                    getDPAttribute(dp.Attributes(), "crn", ""),
+				IsViewable:             getDPAttribute(dp.Attributes(), "isViewable", ""),
+				CalculateSummary:       getDPAttribute(dp.Attributes(), "calculateSummary", ""),
 			}
+			usageList = append(usageList, usage)
 		}
-	default:
-		log.Printf("unsupported metric type: %s", metric.Type().String())
 	}
-
 	return usageList
 }
 
@@ -583,11 +593,12 @@ func getReportEnvironment(environmentStr string) v3alpha1.ReportEnvironment {
 	}
 }
 
-func printTransformedMetrics(swcMetrics v3alpha1.MarketplaceReportSlice) {
+func logTransformedMetrics(logger *zap.Logger, swcMetrics v3alpha1.MarketplaceReportSlice) {
 	b, err := json.MarshalIndent(swcMetrics, "", "  ")
 	if err != nil {
-		log.Printf("error marshalling metrics: %v", err)
+		logger.Debug("error marshalling metrics", zap.Error(err))
 		return
 	}
-	fmt.Printf("Transformed SWC Account Metrics:\n%s\n", string(b))
+
+	logger.Debug("Transformed SWC Account Metrics:\n" + string(b))
 }
