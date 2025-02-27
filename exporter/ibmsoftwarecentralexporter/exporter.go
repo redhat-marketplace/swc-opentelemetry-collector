@@ -350,7 +350,6 @@ func validateReportDataFields(metric pmetric.Metric) []string {
 
 func validateMeasuredUsage(metric pmetric.Metric) []string {
 	var errs []string
-	var valid bool
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		if metric.Gauge().DataPoints().Len() == 0 {
@@ -359,9 +358,7 @@ func validateMeasuredUsage(metric pmetric.Metric) []string {
 			for i := 0; i < metric.Gauge().DataPoints().Len(); i++ {
 				dp := metric.Gauge().DataPoints().At(i)
 				dpErrs := validateMeasuredUsageDataPoint(dp)
-				if len(dpErrs) == 0 {
-					valid = true
-				} else {
+				if len(dpErrs) > 0 {
 					errs = append(errs, fmt.Sprintf("Gauge data point %d missing: %v", i, dpErrs))
 				}
 			}
@@ -373,17 +370,11 @@ func validateMeasuredUsage(metric pmetric.Metric) []string {
 			for i := 0; i < metric.Sum().DataPoints().Len(); i++ {
 				dp := metric.Sum().DataPoints().At(i)
 				dpErrs := validateMeasuredUsageDataPoint(dp)
-				if len(dpErrs) == 0 {
-					valid = true
-				} else {
+				if len(dpErrs) > 0 {
 					errs = append(errs, fmt.Sprintf("Sum data point %d missing: %v", i, dpErrs))
 				}
 			}
 		}
-	}
-	if valid {
-		// At least one datapoint passed validation.
-		return []string{}
 	}
 	return errs
 }
