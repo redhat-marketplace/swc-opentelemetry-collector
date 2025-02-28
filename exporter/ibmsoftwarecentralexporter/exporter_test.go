@@ -1,4 +1,3 @@
-// exporter_test.go
 // Copyright 2025 IBM Corp.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +75,7 @@ func createTestMetric(
 		} else {
 			dp = metric.Sum().DataPoints().AppendEmpty()
 		}
-		dp.SetDoubleValue(42) // arbitrary value
+		dp.SetDoubleValue(42)
 
 		if setEventFields {
 			dp.Attributes().PutStr("eventId", "testEvent")
