@@ -95,7 +95,7 @@ func createTestMetric(
 	return metric
 }
 
-func TestValidateReportDataFields_Refactored(t *testing.T) {
+func TestValidateReportDataFields(t *testing.T) {
 	tests := []struct {
 		name           string
 		mType          pmetric.MetricType
@@ -167,7 +167,7 @@ func TestValidateReportDataFields_Refactored(t *testing.T) {
 	}
 }
 
-func TestValidateMeasuredUsage_Refactored(t *testing.T) {
+func TestValidateMeasuredUsage(t *testing.T) {
 	tests := []struct {
 		name           string
 		mType          pmetric.MetricType
