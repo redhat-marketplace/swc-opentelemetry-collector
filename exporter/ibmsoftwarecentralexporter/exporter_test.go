@@ -311,7 +311,7 @@ func TestPushMetrics(t *testing.T) {
 	params := exporter.Settings{
 		TelemetrySettings: component.TelemetrySettings{Logger: zap.NewNop()},
 	}
-	exporterInstance, err := initSWCAccountMetricsExporter(cfg, params)
+	exporterInstance, err := newExporter(cfg, params)
 	assert.NoError(t, err)
 
 	// Build a metric with 1 datapoint that sets both event-level and usage fields.
@@ -344,7 +344,7 @@ func TestPushLogsData(t *testing.T) {
 	params := exporter.Settings{
 		TelemetrySettings: component.TelemetrySettings{Logger: zap.NewNop()},
 	}
-	exporterInstance, err := initExporter(cfg, params)
+	exporterInstance, err := newExporter(cfg, params)
 	assert.NoError(t, err)
 
 	logs := plog.NewLogs()
@@ -385,7 +385,7 @@ func TestSendData_Success(t *testing.T) {
 
 	cfg.ClientConfig.Endpoint = ts.URL
 	logger := zap.NewNop()
-	be := baseExporter{
+	ie := ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: component.TelemetrySettings{Logger: logger},
 		logger:            logger,
@@ -395,7 +395,7 @@ func TestSendData_Success(t *testing.T) {
 
 	payload := []byte("payload")
 	manifest := []byte("manifest")
-	err := be.sendData(payload, manifest, plog.NewLogs())
+	err := ie.sendData(payload, manifest, plog.NewLogs())
 	assert.NoError(t, err)
 }
 
@@ -412,7 +412,7 @@ func TestSendData_Retryable(t *testing.T) {
 		},
 	}
 	logger := zap.NewNop()
-	be := baseExporter{
+	ie := ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: component.TelemetrySettings{Logger: logger},
 		logger:            logger,
@@ -420,7 +420,7 @@ func TestSendData_Retryable(t *testing.T) {
 		tarGzipPool:       (*TarGzipPool)(&dummyTarGzipPool{}),
 	}
 
-	err := be.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
+	err := ie.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "remote write returned HTTP status")
 }
@@ -438,7 +438,7 @@ func TestSendData_Terminal(t *testing.T) {
 		},
 	}
 	logger := zap.NewNop()
-	be := baseExporter{
+	ie := ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: component.TelemetrySettings{Logger: logger},
 		logger:            logger,
@@ -446,7 +446,7 @@ func TestSendData_Terminal(t *testing.T) {
 		tarGzipPool:       (*TarGzipPool)(&dummyTarGzipPool{}),
 	}
 
-	err := be.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
+	err := ie.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "line protocol write returned")
 }
@@ -458,14 +458,14 @@ func TestSendData_NewRequestError_Logs(t *testing.T) {
 		},
 	}
 	logger := zap.NewNop()
-	be := baseExporter{
+	ie := ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: component.TelemetrySettings{Logger: logger},
 		logger:            logger,
 		client:            &http.Client{},
 		tarGzipPool:       (*TarGzipPool)(&dummyTarGzipPool{}),
 	}
-	err := be.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
+	err := ie.sendData([]byte("payload"), []byte("manifest"), plog.NewLogs())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing ']' in host")
 }
@@ -477,7 +477,7 @@ func TestSendData_NewRequestError_Metrics(t *testing.T) {
 		},
 	}
 	logger := zap.NewNop()
-	be := baseExporter{
+	ie := ibmsoftwarecentralexporter{
 		config:            cfg,
 		telemetrySettings: component.TelemetrySettings{Logger: logger},
 		logger:            logger,
@@ -485,7 +485,7 @@ func TestSendData_NewRequestError_Metrics(t *testing.T) {
 		tarGzipPool:       (*TarGzipPool)(&dummyTarGzipPool{}),
 	}
 	met := pmetric.NewMetrics()
-	err := be.sendData([]byte("payload"), []byte("manifest"), met)
+	err := ie.sendData([]byte("payload"), []byte("manifest"), met)
 	assert.Error(t, err)
 }
 

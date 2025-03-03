@@ -38,7 +38,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type baseExporter struct {
+// ibmsoftwarecentralexporter is the unified exporter type for both logs and metrics.
+type ibmsoftwarecentralexporter struct {
 	config            *Config
 	telemetrySettings component.TelemetrySettings
 	logger            *zap.Logger
@@ -47,9 +48,9 @@ type baseExporter struct {
 }
 
 // sendData encapsulates the common sending logic.
-func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent interface{}) error {
+func (exp *ibmsoftwarecentralexporter) sendData(payloadBytes, manifestBytes []byte, incumbent interface{}) error {
 	id := uuid.New()
-	archive, err := be.tarGzipPool.TGZ(id.String(), manifestBytes, payloadBytes)
+	archive, err := exp.tarGzipPool.TGZ(id.String(), manifestBytes, payloadBytes)
 	if err != nil {
 		return err
 	}
@@ -76,7 +77,7 @@ func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent i
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, be.config.Endpoint, reqBody)
+	req, err := http.NewRequest(http.MethodPost, exp.config.Endpoint, reqBody)
 	if err != nil {
 		switch data := incumbent.(type) {
 		case plog.Logs:
@@ -88,17 +89,17 @@ func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent i
 		}
 	}
 
-	for k, v := range be.config.ClientConfig.Headers {
+	for k, v := range exp.config.ClientConfig.Headers {
 		req.Header.Set(k, string(v))
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	if be.client == nil {
-		be.client = http.DefaultClient
+	if exp.client == nil {
+		exp.client = http.DefaultClient
 	}
 
-	be.logger.Debug("Sending request", zap.String("endpoint", be.config.Endpoint))
-	res, err := be.client.Do(req)
+	exp.logger.Debug("Sending request", zap.String("endpoint", exp.config.Endpoint))
+	res, err := exp.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -125,44 +126,21 @@ func (be *baseExporter) sendData(payloadBytes, manifestBytes []byte, incumbent i
 	}
 }
 
-type ibmsoftwarecentralexporter struct {
-	baseExporter
-}
-
-type swcAccountMetricsExporter struct {
-	baseExporter
-}
-
-func initExporter(cfg *Config, createSettings exporter.Settings) (*ibmsoftwarecentralexporter, error) {
+// newExporter creates a new ibmsoftwarecentralexporter.
+func newExporter(cfg *Config, settings exporter.Settings) (*ibmsoftwarecentralexporter, error) {
 	tarGzipPool := &TarGzipPool{}
-	se := &ibmsoftwarecentralexporter{
-		baseExporter: baseExporter{
-			config:            cfg,
-			telemetrySettings: createSettings.TelemetrySettings,
-			logger:            createSettings.Logger,
-			tarGzipPool:       tarGzipPool,
-		},
+	exp := &ibmsoftwarecentralexporter{
+		config:            cfg,
+		telemetrySettings: settings.TelemetrySettings,
+		logger:            settings.Logger,
+		tarGzipPool:       tarGzipPool,
 	}
-	se.logger.Info("IBM Software Central Exporter configured", zap.String("endpoint", cfg.Endpoint))
-	return se, nil
-}
-
-func initSWCAccountMetricsExporter(cfg *Config, createSettings exporter.Settings) (*swcAccountMetricsExporter, error) {
-	tarGzipPool := &TarGzipPool{}
-	se := &swcAccountMetricsExporter{
-		baseExporter: baseExporter{
-			config:            cfg,
-			telemetrySettings: createSettings.TelemetrySettings,
-			logger:            createSettings.Logger,
-			tarGzipPool:       tarGzipPool,
-		},
-	}
-	se.logger.Info("SWC Account Metrics Exporter configured", zap.String("endpoint", cfg.Endpoint))
-	return se, nil
+	exp.logger.Info("IBM Software Central Exporter configured", zap.String("endpoint", cfg.Endpoint))
+	return exp, nil
 }
 
 func newLogsExporter(ctx context.Context, params exporter.Settings, cfg *Config) (exporter.Logs, error) {
-	s, err := initExporter(cfg, params)
+	exp, err := newExporter(cfg, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the logs exporter: %w", err)
 	}
@@ -170,41 +148,42 @@ func newLogsExporter(ctx context.Context, params exporter.Settings, cfg *Config)
 		ctx,
 		params,
 		cfg,
-		s.pushLogsData,
+		exp.pushLogsData,
 		exporterhelper.WithTimeout(cfg.TimeoutSettings),
 		exporterhelper.WithRetry(cfg.BackOffConfig),
 		exporterhelper.WithQueue(cfg.QueueSettings),
-		exporterhelper.WithStart(s.start),
-		exporterhelper.WithShutdown(s.shutdown),
+		exporterhelper.WithStart(exp.start),
+		exporterhelper.WithShutdown(exp.shutdown),
 	)
 }
 
 func newMetricsExporter(ctx context.Context, params exporter.Settings, cfg *Config) (exporter.Metrics, error) {
-	s, err := initSWCAccountMetricsExporter(cfg, params)
+	exp, err := newExporter(cfg, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the metrics exporter: %w", err)
 	}
-	return exporterhelper.NewMetrics(ctx, params, cfg, s.pushMetrics)
+	return exporterhelper.NewMetrics(ctx, params, cfg, exp.pushMetrics)
 }
 
-func (se *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) (err error) {
-	if se.config.ClientConfig.Auth != nil {
-		se.logger.Debug("auth", zap.String("clientConfig.Auth", fmt.Sprint(se.config.ClientConfig.Auth)))
+func (exp *ibmsoftwarecentralexporter) start(ctx context.Context, host component.Host) error {
+	if exp.config.ClientConfig.Auth != nil {
+		exp.logger.Debug("auth", zap.String("clientConfig.Auth", fmt.Sprint(exp.config.ClientConfig.Auth)))
 	} else {
-		se.logger.Debug("auth", zap.String("clientConfig.Auth", "isNil"))
+		exp.logger.Debug("auth", zap.String("clientConfig.Auth", "isNil"))
 	}
-	se.client, err = se.config.ClientConfig.ToClient(ctx, host, se.telemetrySettings)
+	var err error
+	exp.client, err = exp.config.ClientConfig.ToClient(ctx, host, exp.telemetrySettings)
 	return err
 }
 
-func (se *ibmsoftwarecentralexporter) shutdown(ctx context.Context) error {
-	if se.client != nil {
-		se.client.CloseIdleConnections()
+func (exp *ibmsoftwarecentralexporter) shutdown(ctx context.Context) error {
+	if exp.client != nil {
+		exp.client.CloseIdleConnections()
 	}
 	return nil
 }
 
-func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plog.Logs) error {
+func (exp *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plog.Logs) error {
 	eventJsons := []json.RawMessage{}
 	for i := 0; i < logs.ResourceLogs().Len(); i++ {
 		resourceLogs := logs.ResourceLogs().At(i)
@@ -212,34 +191,34 @@ func (se *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs plo
 			scopeLogs := resourceLogs.ScopeLogs().At(j)
 			for k := 0; k < scopeLogs.LogRecords().Len(); k++ {
 				logRecord := scopeLogs.LogRecords().At(k)
-				se.logger.Debug("logRecord", zap.String("body", logRecord.Body().AsString()))
+				exp.logger.Debug("logRecord", zap.String("body", logRecord.Body().AsString()))
 				b := []byte(logRecord.Body().AsString())
 				if json.Valid(b) {
 					eventJsons = append(eventJsons, b)
 				} else {
-					se.logger.Debug("logRecord was not json", zap.String("body", logRecord.Body().AsString()))
+					exp.logger.Debug("logRecord was not json", zap.String("body", logRecord.Body().AsString()))
 				}
 			}
 		}
 	}
 	if len(eventJsons) > 0 {
-		reportDataBytes, manifestBytes, err := se.buildLogsPayload(eventJsons)
+		reportDataBytes, manifestBytes, err := exp.buildLogsPayload(eventJsons)
 		if err != nil {
 			return err
 		}
-		return se.sendData(reportDataBytes, manifestBytes, logs)
+		return exp.sendData(reportDataBytes, manifestBytes, logs)
 	}
 	return nil
 }
 
-func (se *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMessage) ([]byte, []byte, error) {
+func (exp *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMessage) ([]byte, []byte, error) {
 	metadata := make(Metadata)
 	reportData := ReportData{Metadata: metadata, EventJsons: eventJsons}
 	reportDataBytes, err := json.Marshal(reportData)
 	if err != nil {
 		return nil, nil, err
 	}
-	se.logger.Debug("report data", zap.String("data", string(reportDataBytes)))
+	exp.logger.Debug("report data", zap.String("data", string(reportDataBytes)))
 	manifest := Manifest{Type: "dataReporter", Version: "1"}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
@@ -248,31 +227,30 @@ func (se *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMess
 	return reportDataBytes, manifestBytes, nil
 }
 
-// pushMetrics iterates over metrics, validates them, transforms them, and sends them.
-func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pmetric.Metrics) error {
+func (exp *ibmsoftwarecentralexporter) pushMetrics(ctx context.Context, metrics pmetric.Metrics) error {
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
 		rm := metrics.ResourceMetrics().At(i)
 		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
 			scopeMetrics := rm.ScopeMetrics().At(j)
 			for k := 0; k < scopeMetrics.Metrics().Len(); k++ {
 				metric := scopeMetrics.Metrics().At(k)
-				se.logger.Info("Processing metric", zap.String("metric name", metric.Name()))
+				exp.logger.Info("Processing metric", zap.String("metric name", metric.Name()))
 
 				if errs := validate(metric); len(errs) > 0 {
-					se.logger.Debug("Validation errors", zap.Strings("errors", errs))
+					exp.logger.Debug("Validation errors", zap.Strings("errors", errs))
 					continue
 				}
 
 				swcMetrics := transformMetrics(metric)
-				logTransformedMetrics(se.logger, swcMetrics)
-				data, manifestBytes, err := se.buildMetricsPayload(swcMetrics)
+				logTransformedMetrics(exp.logger, swcMetrics)
+				data, manifestBytes, err := exp.buildMetricsPayload(swcMetrics)
 				if err != nil {
-					se.logger.Error("failed to marshal transformed metrics", zap.Error(err))
+					exp.logger.Error("failed to marshal transformed metrics", zap.Error(err))
 					continue
 				}
 
-				if err := se.sendData(data, manifestBytes, metrics); err != nil {
-					se.logger.Error("failed to send transformed metrics", zap.Error(err))
+				if err := exp.sendData(data, manifestBytes, metrics); err != nil {
+					exp.logger.Error("failed to send transformed metrics", zap.Error(err))
 					continue
 				}
 			}
@@ -281,7 +259,7 @@ func (se *swcAccountMetricsExporter) pushMetrics(ctx context.Context, metrics pm
 	return nil
 }
 
-func (se *swcAccountMetricsExporter) buildMetricsPayload(swcMetrics v3alpha1.MarketplaceReportSlice) ([]byte, []byte, error) {
+func (exp *ibmsoftwarecentralexporter) buildMetricsPayload(swcMetrics v3alpha1.MarketplaceReportSlice) ([]byte, []byte, error) {
 	data, err := json.Marshal(swcMetrics)
 	if err != nil {
 		return nil, nil, err
@@ -291,12 +269,10 @@ func (se *swcAccountMetricsExporter) buildMetricsPayload(swcMetrics v3alpha1.Mar
 	if err != nil {
 		return nil, nil, err
 	}
-	se.logger.Debug("metrics data payload", zap.String("data", string(data)))
+	exp.logger.Debug("metrics data payload", zap.String("data", string(data)))
 	return data, manifestBytes, nil
 }
 
-// validate runs both report data and measured usage validations,
-// returning a slice of error messages (empty if no errors).
 func validate(metric pmetric.Metric) []string {
 	var errs []string
 	switch metric.Type() {
@@ -390,7 +366,6 @@ func validateMeasuredUsageDataPoint(dp pmetric.NumberDataPoint) []string {
 	return errs
 }
 
-// transformMetrics builds the full transformed object.
 func transformMetrics(metric pmetric.Metric) v3alpha1.MarketplaceReportSlice {
 	reportData := transformMarketplaceReportData(metric)
 	// We assume validation has passed, so reportData is not nil.
@@ -424,7 +399,6 @@ func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
 	}
 }
 
-// transformMarketplaceReportData extracts event-level fields from the first datapoint's attributes.
 func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.MarketplaceReportData {
 	var attrs pcommon.Map
 	switch metric.Type() {
@@ -470,7 +444,6 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 	}
 }
 
-// transformMeasuredUsage extracts measured usage datapoints from the metric.
 func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
 	var usageList []v3alpha1.MeasuredUsage
 	switch metric.Type() {
