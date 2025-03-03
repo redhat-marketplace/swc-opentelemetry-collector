@@ -307,7 +307,7 @@ func validateReportDataFields(metric pmetric.Metric) []string {
 		}
 	}
 
-	if getAttribute(attrs, "eventId", "") == "" {
+	if getAttribute(attrs, "eventId") == "" {
 		errs = append(errs, "missing field: eventId")
 	}
 	if getAttributeInt64(attrs, "start", 0) == 0 {
@@ -316,7 +316,7 @@ func validateReportDataFields(metric pmetric.Metric) []string {
 	if getAttributeInt64(attrs, "end", 0) == 0 {
 		errs = append(errs, "missing field: end")
 	}
-	if getAttribute(attrs, "accountId", "") == "" {
+	if getAttribute(attrs, "accountId") == "" {
 		errs = append(errs, "missing field: accountId")
 	}
 
@@ -357,7 +357,7 @@ func validateMeasuredUsage(metric pmetric.Metric) []string {
 func validateMeasuredUsageDataPoint(dp pmetric.NumberDataPoint) []string {
 	var errs []string
 	attrs := dp.Attributes()
-	if getDPAttribute(attrs, "metricId", "") == "" {
+	if getAttribute(attrs, "metricId") == "" {
 		errs = append(errs, "missing field: metricId")
 	}
 	if _, ok := attrs.Get("value"); !ok {
@@ -391,11 +391,11 @@ func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
 		attrs = pcommon.NewMap()
 	}
 	return &v3alpha1.SourceMetadata{
-		ClusterID:     getAttribute(attrs, "clusterId", ""),
-		AccountID:     getAttribute(attrs, "accountId", ""),
-		Version:       getAttribute(attrs, "version", ""),
-		ReportVersion: getAttribute(attrs, "reportVersion", ""),
-		Environment:   getReportEnvironment(getAttribute(attrs, "environment", "")),
+		ClusterID:     getAttribute(attrs, "clusterId"),
+		AccountID:     getAttribute(attrs, "accountId"),
+		Version:       getAttribute(attrs, "version"),
+		ReportVersion: getAttribute(attrs, "reportVersion"),
+		Environment:   getReportEnvironment(getAttribute(attrs, "environment")),
 	}
 }
 
@@ -414,33 +414,33 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 		attrs = pcommon.NewMap()
 	}
 	return &v3alpha1.MarketplaceReportData{
-		EventID:                        getAttribute(attrs, "eventId", ""),
+		EventID:                        getAttribute(attrs, "eventId"),
 		IntervalStart:                  getAttributeInt64(attrs, "start", 0),
 		IntervalEnd:                    getAttributeInt64(attrs, "end", 0),
-		AccountID:                      getAttribute(attrs, "accountId", ""),
-		SubscriptionId:                 getAttribute(attrs, "subscriptionId", ""),
-		Source:                         getAttribute(attrs, "source", ""),
-		SourceSaas:                     getAttribute(attrs, "sourceSaas", ""),
-		AccountIdSaas:                  getAttribute(attrs, "accountIdSaas", ""),
-		SubscriptionIdSaas:             getAttribute(attrs, "subscriptionIdSaas", ""),
-		ProductType:                    getAttribute(attrs, "productType", ""),
-		LicensePartNumber:              getAttribute(attrs, "licensePartNumber", ""),
-		ProductId:                      getAttribute(attrs, "productId", ""),
-		SapEntitlementLine:             getAttribute(attrs, "sapEntitlementLine", ""),
-		ProductName:                    getAttribute(attrs, "productName", ""),
-		ParentProductId:                getAttribute(attrs, "parentProductId", ""),
-		ParentProductName:              getAttribute(attrs, "parentProductName", ""),
-		ParentMetricId:                 getAttribute(attrs, "parentMetricId", ""),
-		TopLevelProductId:              getAttribute(attrs, "topLevelProductId", ""),
-		TopLevelProductName:            getAttribute(attrs, "topLevelProductName", ""),
-		TopLevelProductMetricId:        getAttribute(attrs, "topLevelProductMetricId", ""),
-		DswOfferAccountingSystemCode:   getAttribute(attrs, "dswOfferAccountingSystemCode", ""),
-		DswSubscriptionAgreementNumber: getAttribute(attrs, "dswSubscriptionAgreementNumber", ""),
-		SsmSubscriptionId:              getAttribute(attrs, "ssmSubscriptionId", ""),
-		ICN:                            getAttribute(attrs, "ICN", ""),
-		Group:                          getAttribute(attrs, "group", ""),
-		GroupName:                      getAttribute(attrs, "groupName", ""),
-		Kind:                           getAttribute(attrs, "kind", ""),
+		AccountID:                      getAttribute(attrs, "accountId"),
+		SubscriptionId:                 getAttribute(attrs, "subscriptionId"),
+		Source:                         getAttribute(attrs, "source"),
+		SourceSaas:                     getAttribute(attrs, "sourceSaas"),
+		AccountIdSaas:                  getAttribute(attrs, "accountIdSaas"),
+		SubscriptionIdSaas:             getAttribute(attrs, "subscriptionIdSaas"),
+		ProductType:                    getAttribute(attrs, "productType"),
+		LicensePartNumber:              getAttribute(attrs, "licensePartNumber"),
+		ProductId:                      getAttribute(attrs, "productId"),
+		SapEntitlementLine:             getAttribute(attrs, "sapEntitlementLine"),
+		ProductName:                    getAttribute(attrs, "productName"),
+		ParentProductId:                getAttribute(attrs, "parentProductId"),
+		ParentProductName:              getAttribute(attrs, "parentProductName"),
+		ParentMetricId:                 getAttribute(attrs, "parentMetricId"),
+		TopLevelProductId:              getAttribute(attrs, "topLevelProductId"),
+		TopLevelProductName:            getAttribute(attrs, "topLevelProductName"),
+		TopLevelProductMetricId:        getAttribute(attrs, "topLevelProductMetricId"),
+		DswOfferAccountingSystemCode:   getAttribute(attrs, "dswOfferAccountingSystemCode"),
+		DswSubscriptionAgreementNumber: getAttribute(attrs, "dswSubscriptionAgreementNumber"),
+		SsmSubscriptionId:              getAttribute(attrs, "ssmSubscriptionId"),
+		ICN:                            getAttribute(attrs, "ICN"),
+		Group:                          getAttribute(attrs, "group"),
+		GroupName:                      getAttribute(attrs, "groupName"),
+		Kind:                           getAttribute(attrs, "kind"),
 	}
 }
 
@@ -452,22 +452,22 @@ func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
 		for i := 0; i < g.DataPoints().Len(); i++ {
 			dp := g.DataPoints().At(i)
 			usage := v3alpha1.MeasuredUsage{
-				MetricID:               getDPAttribute(dp.Attributes(), "metricId", ""),
+				MetricID:               getAttribute(dp.Attributes(), "metricId"),
 				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
-				MeterDefNamespace:      getDPAttribute(dp.Attributes(), "meter_def_namespace", ""),
-				MeterDefName:           getDPAttribute(dp.Attributes(), "meter_def_name", ""),
-				MetricType:             getDPAttribute(dp.Attributes(), "metricType", ""),
-				MetricAggregationType:  getDPAttribute(dp.Attributes(), "metricAggregationType", ""),
-				MeasuredMetricId:       getDPAttribute(dp.Attributes(), "measuredMetricId", ""),
-				ProductConversionRatio: getDPAttribute(dp.Attributes(), "productConversionRatio", ""),
-				MeasuredValue:          getDPAttribute(dp.Attributes(), "measuredValue", ""),
-				ClusterId:              getDPAttribute(dp.Attributes(), "clusterId", ""),
-				Hostname:               getDPAttribute(dp.Attributes(), "hostname", ""),
-				Pod:                    getDPAttribute(dp.Attributes(), "pod", ""),
-				PlatformId:             getDPAttribute(dp.Attributes(), "platformId", ""),
-				Crn:                    getDPAttribute(dp.Attributes(), "crn", ""),
-				IsViewable:             getDPAttribute(dp.Attributes(), "isViewable", ""),
-				CalculateSummary:       getDPAttribute(dp.Attributes(), "calculateSummary", ""),
+				MeterDefNamespace:      getAttribute(dp.Attributes(), "meter_def_namespace"),
+				MeterDefName:           getAttribute(dp.Attributes(), "meter_def_name"),
+				MetricType:             getAttribute(dp.Attributes(), "metricType"),
+				MetricAggregationType:  getAttribute(dp.Attributes(), "metricAggregationType"),
+				MeasuredMetricId:       getAttribute(dp.Attributes(), "measuredMetricId"),
+				ProductConversionRatio: getAttribute(dp.Attributes(), "productConversionRatio"),
+				MeasuredValue:          getAttribute(dp.Attributes(), "measuredValue"),
+				ClusterId:              getAttribute(dp.Attributes(), "clusterId"),
+				Hostname:               getAttribute(dp.Attributes(), "hostname"),
+				Pod:                    getAttribute(dp.Attributes(), "pod"),
+				PlatformId:             getAttribute(dp.Attributes(), "platformId"),
+				Crn:                    getAttribute(dp.Attributes(), "crn"),
+				IsViewable:             getAttribute(dp.Attributes(), "isViewable"),
+				CalculateSummary:       getAttribute(dp.Attributes(), "calculateSummary"),
 			}
 			usageList = append(usageList, usage)
 		}
@@ -476,34 +476,27 @@ func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
 		for i := 0; i < s.DataPoints().Len(); i++ {
 			dp := s.DataPoints().At(i)
 			usage := v3alpha1.MeasuredUsage{
-				MetricID:               getDPAttribute(dp.Attributes(), "metricId", ""),
+				MetricID:               getAttribute(dp.Attributes(), "metricId"),
 				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
-				MeterDefNamespace:      getDPAttribute(dp.Attributes(), "meter_def_namespace", ""),
-				MeterDefName:           getDPAttribute(dp.Attributes(), "meter_def_name", ""),
-				MetricType:             getDPAttribute(dp.Attributes(), "metricType", ""),
-				MetricAggregationType:  getDPAttribute(dp.Attributes(), "metricAggregationType", ""),
-				MeasuredMetricId:       getDPAttribute(dp.Attributes(), "measuredMetricId", ""),
-				ProductConversionRatio: getDPAttribute(dp.Attributes(), "productConversionRatio", ""),
-				MeasuredValue:          getDPAttribute(dp.Attributes(), "measuredValue", ""),
-				ClusterId:              getDPAttribute(dp.Attributes(), "clusterId", ""),
-				Hostname:               getDPAttribute(dp.Attributes(), "hostname", ""),
-				Pod:                    getDPAttribute(dp.Attributes(), "pod", ""),
-				PlatformId:             getDPAttribute(dp.Attributes(), "platformId", ""),
-				Crn:                    getDPAttribute(dp.Attributes(), "crn", ""),
-				IsViewable:             getDPAttribute(dp.Attributes(), "isViewable", ""),
-				CalculateSummary:       getDPAttribute(dp.Attributes(), "calculateSummary", ""),
+				MeterDefNamespace:      getAttribute(dp.Attributes(), "meter_def_namespace"),
+				MeterDefName:           getAttribute(dp.Attributes(), "meter_def_name"),
+				MetricType:             getAttribute(dp.Attributes(), "metricType"),
+				MetricAggregationType:  getAttribute(dp.Attributes(), "metricAggregationType"),
+				MeasuredMetricId:       getAttribute(dp.Attributes(), "measuredMetricId"),
+				ProductConversionRatio: getAttribute(dp.Attributes(), "productConversionRatio"),
+				MeasuredValue:          getAttribute(dp.Attributes(), "measuredValue"),
+				ClusterId:              getAttribute(dp.Attributes(), "clusterId"),
+				Hostname:               getAttribute(dp.Attributes(), "hostname"),
+				Pod:                    getAttribute(dp.Attributes(), "pod"),
+				PlatformId:             getAttribute(dp.Attributes(), "platformId"),
+				Crn:                    getAttribute(dp.Attributes(), "crn"),
+				IsViewable:             getAttribute(dp.Attributes(), "isViewable"),
+				CalculateSummary:       getAttribute(dp.Attributes(), "calculateSummary"),
 			}
 			usageList = append(usageList, usage)
 		}
 	}
 	return usageList
-}
-
-func getDPAttribute(attrs pcommon.Map, key, defaultValue string) string {
-	if val, ok := attrs.Get(key); ok {
-		return val.AsString()
-	}
-	return defaultValue
 }
 
 func getFloat64FromAttribute(attrs pcommon.Map, key string, defaultValue float64) float64 {
@@ -522,11 +515,11 @@ func getFloat64FromAttribute(attrs pcommon.Map, key string, defaultValue float64
 	return defaultValue
 }
 
-func getAttribute(attrs pcommon.Map, key string, defaultValue string) string {
+func getAttribute(attrs pcommon.Map, key string) string {
 	if val, ok := attrs.Get(key); ok {
 		return val.AsString()
 	}
-	return defaultValue
+	return ""
 }
 
 func getAttributeInt64(attrs pcommon.Map, key string, defaultValue int64) int64 {

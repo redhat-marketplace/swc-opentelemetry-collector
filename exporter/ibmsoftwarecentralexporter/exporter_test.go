@@ -16,6 +16,7 @@ package ibmsoftwarecentralexporter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -489,24 +490,38 @@ func TestSendData_NewRequestError_Metrics(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestGetDPAttribute(t *testing.T) {
-	m := pcommon.NewMap()
-	m.PutStr("key", "value")
-	result := getDPAttribute(m, "key", "default")
-	assert.Equal(t, "value", result, "should return the value for existing key")
-
-	result = getDPAttribute(m, "missing", "default")
-	assert.Equal(t, "default", result, "should return the default for missing key")
-}
-
 func TestGetAttribute(t *testing.T) {
 	m := pcommon.NewMap()
 	m.PutStr("key", "value")
-	result := getAttribute(m, "key", "default")
+	result := getAttribute(m, "key")
 	assert.Equal(t, "value", result, "should return the value for existing key")
 
-	result = getAttribute(m, "missing", "default")
-	assert.Equal(t, "default", result, "should return default when key is missing")
+	result = getAttribute(m, "missing")
+	assert.Equal(t, "", result, "should return empty string for missing key")
+}
+
+func TestTransformMetrics_OmitOptionalFields(t *testing.T) {
+	metric := createTestMetric(pmetric.MetricTypeGauge, true, true, true)
+
+	dp := metric.Gauge().DataPoints().At(0)
+	attrs := dp.Attributes()
+	attrs.PutStr("subscriptionId", "")
+	attrs.PutStr("source", "")
+	attrs.PutStr("productType", "")
+
+	transformed := transformMetrics(metric)
+	// Marshal the transformed object.
+	b, err := json.Marshal(transformed)
+	assert.NoError(t, err)
+	jsonStr := string(b)
+
+	// Assert that the optional fields with empty values are omitted.
+	assert.NotContains(t, jsonStr, "subscriptionId", "empty subscriptionId should be omitted")
+	assert.NotContains(t, jsonStr, "source", "empty source should be omitted")
+	assert.NotContains(t, jsonStr, "productType", "empty productType should be omitted")
+	// Also assert that required fields are still present.
+	assert.Contains(t, jsonStr, "eventId", "required eventId should be present")
+	assert.Contains(t, jsonStr, "accountId", "required accountId should be present")
 }
 
 func TestGetFloat64FromAttribute(t *testing.T) {
