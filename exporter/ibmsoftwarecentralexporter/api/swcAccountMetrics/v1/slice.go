@@ -16,7 +16,7 @@ package v3alpha1
 
 import "encoding/json"
 
-const Version = "v3alpha1"
+const Version = "v1"
 
 type ReportSlice struct {
 	/*
