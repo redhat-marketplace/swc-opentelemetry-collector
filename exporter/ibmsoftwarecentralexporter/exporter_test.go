@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/v3alpha1"
+	swcAccountMetricsV1 "github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/api/swcAccountMetrics/v1"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
@@ -573,11 +573,11 @@ func TestGetAttributeInt64(t *testing.T) {
 
 func TestGetReportEnvironment(t *testing.T) {
 	result := getReportEnvironment("production")
-	assert.Equal(t, v3alpha1.ReportProductionEnv, result, "should return production environment")
+	assert.Equal(t, swcAccountMetricsV1.ReportProductionEnv, result, "should return production environment")
 
 	result = getReportEnvironment("stage")
-	assert.Equal(t, v3alpha1.ReportSandboxEnv, result, "should return sandbox environment")
+	assert.Equal(t, swcAccountMetricsV1.ReportSandboxEnv, result, "should return sandbox environment")
 
 	result = getReportEnvironment("unknown")
-	assert.Equal(t, v3alpha1.ReportEnvironment(""), result, "should return empty for unknown environment")
+	assert.Equal(t, swcAccountMetricsV1.ReportEnvironment(""), result, "should return empty for unknown environment")
 }
