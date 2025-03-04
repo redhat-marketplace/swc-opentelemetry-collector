@@ -220,8 +220,7 @@ func (exp *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMes
 		return nil, nil, err
 	}
 	exp.logger.Debug("report data", zap.String("data", string(reportDataBytes)))
-	manifest := dataReporterV1.Manifest{Type: "dataReporter", Version: "1"}
-	manifestBytes, err := json.Marshal(manifest)
+	manifestBytes, err := json.Marshal(dataReporterV1.NewDataReporterManifest())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -265,8 +264,7 @@ func (exp *ibmsoftwarecentralexporter) buildMetricsPayload(swcMetrics swcAccount
 	if err != nil {
 		return nil, nil, err
 	}
-	manifest := dataReporterV1.Manifest{Type: "metricsReporter", Version: "1"}
-	manifestBytes, err := json.Marshal(manifest)
+	manifestBytes, err := json.Marshal(dataReporterV1.NewMetricsReporterManifest())
 	if err != nil {
 		return nil, nil, err
 	}

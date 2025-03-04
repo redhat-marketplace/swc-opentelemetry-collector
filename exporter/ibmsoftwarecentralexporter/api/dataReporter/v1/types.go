@@ -29,3 +29,17 @@ type ReportData struct {
 	Metadata   Metadata          `json:"metadata,omitempty"`
 	EventJsons []json.RawMessage `json:"data"`
 }
+
+const (
+	DataReporterType    = "dataReporter"
+	MetricsReporterType = "metricsReporter"
+	ReporterVersion     = "1"
+)
+
+func NewDataReporterManifest() Manifest {
+	return Manifest{Type: DataReporterType, Version: ReporterVersion}
+}
+
+func NewMetricsReporterManifest() Manifest {
+	return Manifest{Type: MetricsReporterType, Version: ReporterVersion}
+}
