@@ -27,7 +27,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/v3alpha1"
+	dataReporterV1 "github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/api/dataReporter/v1"
+	swcAccountMetricsV1 "github.com/redhat-marketplace/swc-opentelemetry-collector/exporter/ibmsoftwarecentralexporter/api/swcAccountMetrics/v1"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/exporter"
@@ -212,14 +213,14 @@ func (exp *ibmsoftwarecentralexporter) pushLogsData(ctx context.Context, logs pl
 }
 
 func (exp *ibmsoftwarecentralexporter) buildLogsPayload(eventJsons []json.RawMessage) ([]byte, []byte, error) {
-	metadata := make(Metadata)
-	reportData := ReportData{Metadata: metadata, EventJsons: eventJsons}
+	metadata := make(dataReporterV1.Metadata)
+	reportData := dataReporterV1.ReportData{Metadata: metadata, EventJsons: eventJsons}
 	reportDataBytes, err := json.Marshal(reportData)
 	if err != nil {
 		return nil, nil, err
 	}
 	exp.logger.Debug("report data", zap.String("data", string(reportDataBytes)))
-	manifest := Manifest{Type: "dataReporter", Version: "1"}
+	manifest := dataReporterV1.Manifest{Type: "dataReporter", Version: "1"}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return nil, nil, err
@@ -259,12 +260,12 @@ func (exp *ibmsoftwarecentralexporter) pushMetrics(ctx context.Context, metrics 
 	return nil
 }
 
-func (exp *ibmsoftwarecentralexporter) buildMetricsPayload(swcMetrics v3alpha1.MarketplaceReportSlice) ([]byte, []byte, error) {
+func (exp *ibmsoftwarecentralexporter) buildMetricsPayload(swcMetrics swcAccountMetricsV1.ReportSlice) ([]byte, []byte, error) {
 	data, err := json.Marshal(swcMetrics)
 	if err != nil {
 		return nil, nil, err
 	}
-	manifest := Manifest{Type: "metricsReporter", Version: "1"}
+	manifest := dataReporterV1.Manifest{Type: "metricsReporter", Version: "1"}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return nil, nil, err
@@ -366,17 +367,17 @@ func validateMeasuredUsageDataPoint(dp pmetric.NumberDataPoint) []string {
 	return errs
 }
 
-func transformMetrics(metric pmetric.Metric) v3alpha1.MarketplaceReportSlice {
-	reportData := transformMarketplaceReportData(metric)
+func transformMetrics(metric pmetric.Metric) swcAccountMetricsV1.ReportSlice {
+	reportData := transformReportData(metric)
 	// We assume validation has passed, so reportData is not nil.
 	reportData.MeasuredUsage = transformMeasuredUsage(metric)
-	return v3alpha1.MarketplaceReportSlice{
+	return swcAccountMetricsV1.ReportSlice{
 		Metadata: buildSourceMetadata(metric),
-		Metrics:  []*v3alpha1.MarketplaceReportData{reportData},
+		Metrics:  []*swcAccountMetricsV1.ReportData{reportData},
 	}
 }
 
-func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
+func buildSourceMetadata(metric pmetric.Metric) *swcAccountMetricsV1.SourceMetadata {
 	var attrs pcommon.Map
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
@@ -390,7 +391,7 @@ func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
 	default:
 		attrs = pcommon.NewMap()
 	}
-	return &v3alpha1.SourceMetadata{
+	return &swcAccountMetricsV1.SourceMetadata{
 		ClusterID:     getAttribute(attrs, "clusterId"),
 		AccountID:     getAttribute(attrs, "accountId"),
 		Version:       getAttribute(attrs, "version"),
@@ -399,7 +400,7 @@ func buildSourceMetadata(metric pmetric.Metric) *v3alpha1.SourceMetadata {
 	}
 }
 
-func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.MarketplaceReportData {
+func transformReportData(metric pmetric.Metric) *swcAccountMetricsV1.ReportData {
 	var attrs pcommon.Map
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
@@ -413,7 +414,7 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 	default:
 		attrs = pcommon.NewMap()
 	}
-	return &v3alpha1.MarketplaceReportData{
+	return &swcAccountMetricsV1.ReportData{
 		EventID:                        getAttribute(attrs, "eventId"),
 		IntervalStart:                  getAttributeInt64(attrs, "start", 0),
 		IntervalEnd:                    getAttributeInt64(attrs, "end", 0),
@@ -444,14 +445,14 @@ func transformMarketplaceReportData(metric pmetric.Metric) *v3alpha1.Marketplace
 	}
 }
 
-func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
-	var usageList []v3alpha1.MeasuredUsage
+func transformMeasuredUsage(metric pmetric.Metric) []swcAccountMetricsV1.MeasuredUsage {
+	var usageList []swcAccountMetricsV1.MeasuredUsage
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		g := metric.Gauge()
 		for i := 0; i < g.DataPoints().Len(); i++ {
 			dp := g.DataPoints().At(i)
-			usage := v3alpha1.MeasuredUsage{
+			usage := swcAccountMetricsV1.MeasuredUsage{
 				MetricID:               getAttribute(dp.Attributes(), "metricId"),
 				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
 				MeterDefNamespace:      getAttribute(dp.Attributes(), "meter_def_namespace"),
@@ -475,7 +476,7 @@ func transformMeasuredUsage(metric pmetric.Metric) []v3alpha1.MeasuredUsage {
 		s := metric.Sum()
 		for i := 0; i < s.DataPoints().Len(); i++ {
 			dp := s.DataPoints().At(i)
-			usage := v3alpha1.MeasuredUsage{
+			usage := swcAccountMetricsV1.MeasuredUsage{
 				MetricID:               getAttribute(dp.Attributes(), "metricId"),
 				Value:                  getFloat64FromAttribute(dp.Attributes(), "value", dp.DoubleValue()),
 				MeterDefNamespace:      getAttribute(dp.Attributes(), "meter_def_namespace"),
@@ -538,18 +539,18 @@ func getAttributeInt64(attrs pcommon.Map, key string, defaultValue int64) int64 
 	return defaultValue
 }
 
-func getReportEnvironment(environmentStr string) v3alpha1.ReportEnvironment {
+func getReportEnvironment(environmentStr string) swcAccountMetricsV1.ReportEnvironment {
 	switch environmentStr {
-	case string(v3alpha1.ReportProductionEnv):
-		return v3alpha1.ReportProductionEnv
-	case string(v3alpha1.ReportSandboxEnv):
-		return v3alpha1.ReportSandboxEnv
+	case string(swcAccountMetricsV1.ReportProductionEnv):
+		return swcAccountMetricsV1.ReportProductionEnv
+	case string(swcAccountMetricsV1.ReportSandboxEnv):
+		return swcAccountMetricsV1.ReportSandboxEnv
 	default:
 		return ""
 	}
 }
 
-func logTransformedMetrics(logger *zap.Logger, swcMetrics v3alpha1.MarketplaceReportSlice) {
+func logTransformedMetrics(logger *zap.Logger, swcMetrics swcAccountMetricsV1.ReportSlice) {
 	b, err := json.MarshalIndent(swcMetrics, "", "  ")
 	if err != nil {
 		logger.Debug("error marshalling metrics", zap.Error(err))

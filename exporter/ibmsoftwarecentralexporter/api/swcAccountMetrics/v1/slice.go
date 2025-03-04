@@ -18,7 +18,7 @@ import "encoding/json"
 
 const Version = "v3alpha1"
 
-type MarketplaceReportSlice struct {
+type ReportSlice struct {
 	/*
 		This is required only because RH Insights forces the metadata field.
 		It will exist only in the case where data is sent through the RH pipeline to the COS bucket directly.
@@ -26,10 +26,10 @@ type MarketplaceReportSlice struct {
 	*/
 	Metadata *SourceMetadata `json:"metadata,omitempty"`
 	// An array of metrics data objects.
-	Metrics []*MarketplaceReportData `json:"data"`
+	Metrics []*ReportData `json:"data"`
 }
 
-type MarketplaceReportData struct {
+type ReportData struct {
 
 	// --- Usage event properties ---
 
@@ -42,7 +42,7 @@ type MarketplaceReportData struct {
 	// Milliseconds from epoch UTC representing the end of the window for the usage data being reported
 	IntervalEnd int64 `json:"end,omitempty" mapstructure:"-"`
 
-	// The id of the IBM Software Central or Red Hat Marketplace account that usage is being reported for.
+	// The id of the platform account that usage is being reported for.
 	AccountID string `json:"accountId,omitempty" mapstructure:"-"`
 
 	// An array of usage objects.
@@ -51,7 +51,7 @@ type MarketplaceReportData struct {
 	// --- Additional Properties ---
 	// mapstructure tag should match the prometheus label to facilitate mapstructure.Decode()
 
-	// The id of the IBM Software Central or Red Hat Marketplace subscription for the product that usage is being reported for.
+	// The id of the platform subscription for the product that usage is being reported for.
 	SubscriptionId                 string `json:"subscriptionId,omitempty" mapstructure:"subscriptionId"`
 	Source                         string `json:"source,omitempty" mapstructure:"source"`
 	SourceSaas                     string `json:"sourceSaas,omitempty" mapstructure:"sourceSaas"`
